@@ -1,0 +1,214 @@
+"""
+Blocks model - Cleaned and optimized schema
+"""
+from datetime import datetime
+from typing import Optional, Dict, Any
+import enum
+
+from sqlalchemy import String, Text, DateTime, Integer, func, ForeignKey, JSON, Enum
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base
+
+# Define ENUM types to match Payload CMS
+class BlockMediaTypeEnum(enum.Enum):
+    image = "image"
+    video = "video"
+    gif = "gif"
+    unknown = "unknown"
+
+class BlockStatusEnum(enum.Enum):
+    pending = "pending"
+    fetched = "fetched"
+    scraped = "scraped"
+    uploaded = "uploaded"
+    error = "error"
+
+
+class Block(Base):
+    """Blocks table - scraped content data (cleaned schema)"""
+    __tablename__ = "blocks"
+    
+    # Primary key - using integer to match Payload
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    
+    # External Reference
+    external_id: Mapped[str] = mapped_column(
+        String(255), 
+        nullable=False, 
+        unique=True,
+        index=True,
+        doc="Unique identifier from Savee.it"
+    )
+    
+    # Relationships (get source_type/username via relationships)
+    source_id: Mapped[int] = mapped_column(
+        ForeignKey('sources.id'), 
+        nullable=False, 
+        index=True,
+        doc="Source that discovered this block"
+    )
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey('runs.id'), 
+        nullable=False, 
+        index=True,
+        doc="Run that scraped this block"
+    )
+    
+    # Note: User-block relationships now handled via user_blocks junction table
+    
+    # Content Info
+    url: Mapped[str] = mapped_column(
+        Text, 
+        nullable=False,
+        doc="Content URL on Savee.it"
+    )
+    title: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="Title of the content"
+    )
+    description: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="Description of the content"
+    )
+    
+    # Media information
+    media_type: Mapped[BlockMediaTypeEnum] = mapped_column(
+        Enum(BlockMediaTypeEnum, name="enum_blocks_media_type", create_type=False), 
+        nullable=True,
+        doc="Media type: image, video, gif, unknown"
+    )
+    image_url: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="Original image URL"
+    )
+    video_url: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="Original video URL"
+    )
+    thumbnail_url: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="Thumbnail URL"
+    )
+
+    
+    # Status and Processing
+    status: Mapped[BlockStatusEnum] = mapped_column(
+        Enum(BlockStatusEnum, name="enum_blocks_status", create_type=False), 
+        default=BlockStatusEnum.pending,
+        nullable=False,
+        doc="Processing status: pending, fetched, scraped, uploaded, error"
+    )
+    
+    # Comprehensive OpenGraph Metadata
+    og_title: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="OpenGraph title from meta tags"
+    )
+    og_description: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="OpenGraph description from meta tags"
+    )
+    og_image_url: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="OpenGraph image URL from meta tags"
+    )
+    og_url: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="OpenGraph canonical URL"
+    )
+    source_api_url: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="Savee API endpoint for source resolution"
+    )
+    saved_at: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="ISO timestamp when item was scraped"
+    )
+
+    # Rich Metadata for Filtering/Search
+    color_hexes: Mapped[Dict[str, Any]] = mapped_column(
+        JSON, 
+        nullable=True,
+        doc="Array of hex color codes extracted from image"
+    )
+    ai_tags: Mapped[Dict[str, Any]] = mapped_column(
+        JSON, 
+        nullable=True,
+        doc="AI-generated descriptive tags for content"
+    )
+    colors: Mapped[Dict[str, Any]] = mapped_column(
+        JSON, 
+        nullable=True,
+        doc="Array of RGB color values"
+    )
+    links: Mapped[Dict[str, Any]] = mapped_column(
+        JSON, 
+        nullable=True,
+        doc="Links extracted from item sidebar (includes original source URLs)"
+    )
+    metadata_: Mapped[Dict[str, Any]] = mapped_column(
+        "metadata",  # Specify the actual column name
+        JSON, 
+        nullable=True,
+        doc="Complete sidebar info and other metadata"
+    )
+    
+    # Persisted fields used for CMS filtering/search (optional)
+    origin_text: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Computed origin for filters (home | pop | username)"
+    )
+    saved_by_usernames: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        doc="Comma-separated usernames who saved this block"
+    )
+    
+    # Storage
+    r2_key: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="R2 storage key for uploaded media"
+    )
+    
+    # Error handling
+    error_message: Mapped[str] = mapped_column(
+        Text, 
+        nullable=True,
+        doc="Error message if processing failed"
+    )
+    
+    # Timestamps (standard Payload)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        doc="When this block was created"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+        doc="When this block was last updated"
+    )
+
+    # Relationships
+    source = relationship("Source")
+    run = relationship("Run")
+
+    def __repr__(self) -> str:
+        return f"<Block(id={self.id}, external_id='{self.external_id}', media_type='{self.media_type}', status='{self.status}')>"
