@@ -38,7 +38,6 @@
     ".next-win/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-temp/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"
