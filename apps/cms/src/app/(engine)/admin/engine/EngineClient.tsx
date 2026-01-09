@@ -1,14 +1,6 @@
 "use client";
 
 import React from "react";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 
 export function ComponentExample() {
   return (
@@ -18,18 +10,6 @@ export function ComponentExample() {
         <p className="text-muted-foreground text-sm">
           A clean slate for the ScrapeSavee Engine.
         </p>
-        <Select>
-  <SelectTrigger className="w-[180px]">
-    <SelectValue placeholder="Theme" />
-  </SelectTrigger>
-  <SelectContent>
-    <SelectGroup>
-      <SelectItem value="light">Light</SelectItem>
-      <SelectItem value="dark">Dark</SelectItem>
-      <SelectItem value="system">System</SelectItem>
-    </SelectGroup>
-  </SelectContent>
-</Select>
       </div>
     </div>
   );
