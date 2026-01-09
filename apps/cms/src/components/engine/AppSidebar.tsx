@@ -13,7 +13,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Gauge, List, Settings, Home, Activity } from "lucide-react";
+import { Layers, Plus, Activity } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -54,7 +54,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 tooltip="Add Jobs"
               >
                 <Link href="/admin/engine">
-                  <Gauge className="size-4" />
+                  <Plus className="size-4" />
                   <span>Add Jobs</span>
                 </Link>
               </SidebarMenuButton>
@@ -67,7 +67,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 tooltip="Manage Jobs"
               >
                 <Link href="/admin/engine/jobs">
-                  <List className="size-4" />
+                  <Layers className="size-4" />
                   <span>Manage Jobs</span>
                 </Link>
               </SidebarMenuButton>
