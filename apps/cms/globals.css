@@ -116,10 +116,6 @@
   --sidebar-ring: oklch(0.645 0.1978 41.15);
 }
 
-html {
-  scrollbar-gutter: stable;
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -129,6 +125,5 @@ html {
     font-feature-settings: "cv11" 1, "ss01" 1, "ss02" 1;
     font-variant-numeric: tabular-nums;
     font-optical-sizing: auto;
-    scrollbar-gutter: stable;
   }
 }
