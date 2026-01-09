@@ -51,11 +51,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <SidebarMenuButton 
                 asChild 
                 isActive={pathname === "/admin/engine"}
-                tooltip="Dashboard"
+                tooltip="Add Jobs"
               >
                 <Link href="/admin/engine">
                   <Gauge className="size-4" />
-                  <span>Dashboard</span>
+                  <span>Add Jobs</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -68,7 +68,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               >
                 <Link href="/admin/engine/jobs">
                   <List className="size-4" />
-                  <span>Jobs</span>
+                  <span>Manage Jobs</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
