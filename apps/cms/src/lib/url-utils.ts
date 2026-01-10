@@ -1,4 +1,4 @@
-export type SourceType = "home" | "pop" | "user";
+export type SourceType = "home" | "pop" | "user" | "blocks";
 
 export interface ParsedSaveeUrl {
   isValid: boolean;
@@ -71,4 +71,53 @@ export function parseSaveeUrl(input: string): ParsedSaveeUrl {
 
 export function validateSaveeUrl(url: string): boolean {
   return parseSaveeUrl(url).isValid;
+}
+
+export interface BulkUrlDetection {
+  isBulk: boolean;
+  urls: string[];
+  count: number;
+}
+
+export function detectBulkUrls(input: string): BulkUrlDetection {
+  if (!input || !input.trim()) {
+    return { isBulk: false, urls: [], count: 0 };
+  }
+
+  // Split by newlines, commas, spaces
+  const rawParts = input.split(/[,\s\n]+/).map((p) => p.trim()).filter(Boolean);
+  
+  // Filter for URLs with /i/ pattern (item URLs)
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  
+  for (const part of rawParts) {
+    if (part.startsWith("http://") || part.startsWith("https://")) {
+      // Check if it's an item URL (/i/)
+      if (part.includes("/i/")) {
+        try {
+          // Normalize URL (remove trailing slashes, fragments, query params)
+          const url = new URL(part);
+          const normalized = `${url.protocol}//${url.hostname}${url.pathname.replace(/\/+$/, "")}`;
+          
+          if (!seen.has(normalized)) {
+            seen.add(normalized);
+            urls.push(normalized);
+          }
+        } catch {
+          // If URL parsing fails, try to use as-is
+          if (!seen.has(part)) {
+            seen.add(part);
+            urls.push(part);
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    isBulk: urls.length > 1,
+    urls,
+    count: urls.length,
+  };
 }

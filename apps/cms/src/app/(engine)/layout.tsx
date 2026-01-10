@@ -6,6 +6,7 @@ import "../../../globals.css";
 import { cn } from "@/lib/utils";
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/engine/AppSidebar";
+import { Toaster } from "@/components/ui/toaster";
 
 const inter = localFont({
   src: [
@@ -97,18 +98,14 @@ export default function EngineRootLayout({
               
               <div className="flex flex-1 overflow-hidden">
                 <AppSidebar />
-                <SidebarInset className="flex-1 overflow-y-auto w-full relative">
-                    <div 
-                      className="p-6 md:p-8 lg:p-10 max-w-7xl mx-auto w-full"
-                      style={{ scrollbarGutter: "stable" }}
-                    >
+                <SidebarInset className="flex-1 overflow-hidden w-full relative">
                         {children}
-                    </div>
                 </SidebarInset>
               </div>
             </div>
           </SidebarProvider>
         </ThemeProvider>
+        <Toaster />
       </body>
 
     </html>

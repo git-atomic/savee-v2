@@ -1,0 +1,34 @@
+"use client";
+
+import * as React from "react";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
+
+interface JobTextareaProps {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+  disabled?: boolean;
+}
+
+export function JobTextarea({
+  value,
+  onChange,
+  placeholder = "Enter savee.it URL or paste multiple item URLs...",
+  className,
+  disabled = false,
+}: JobTextareaProps) {
+  return (
+    <Textarea
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      disabled={disabled}
+      className={cn(
+        "min-h-64 w-full resize-none flex-1 border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none",
+        className
+      )}
+    />
+  );
+}
