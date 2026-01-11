@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Spinner } from "@/components/ui/spinner";
 
 type OriginMap = {
   home: boolean;
@@ -36,7 +37,6 @@ export default function OriginPillsCell({ rowData }: Props) {
           setOriginData(extractOriginFromRowData(rowData));
         }
       } catch (error) {
-        console.warn("Failed to fetch origin data:", error);
         // Always fallback to extracting from row data
         setOriginData(extractOriginFromRowData(rowData));
       } finally {
@@ -126,9 +126,8 @@ export default function OriginPillsCell({ rowData }: Props) {
 
   if (loading) {
     return (
-      <div className="flex space-x-1">
-        <div className="animate-pulse bg-gray-200 rounded-md h-5 w-12"></div>
-        <div className="animate-pulse bg-gray-200 rounded-md h-5 w-16"></div>
+      <div className="flex items-center justify-center">
+        <Spinner size="sm" />
       </div>
     );
   }

@@ -22,7 +22,6 @@ async function startWorkerProcess(
   db: any
 ) {
   const workerPath = path.resolve(process.cwd(), "../worker");
-  console.log(`🚀 Starting worker for run ${runId} with URL: ${sourceUrl}`);
 
   try {
     // Resolve a python executable robustly across platforms
@@ -43,7 +42,6 @@ async function startWorkerProcess(
         }
       } catch {}
     }
-    console.log(`[engine] using Python executable: ${pythonCmd}`);
 
     const pythonProcess = spawn(
       pythonCmd,
@@ -68,18 +66,8 @@ async function startWorkerProcess(
     // Track the process for pause/resume functionality
     runningProcesses.set(jobId, pythonProcess);
 
-    // Log worker output
-    pythonProcess.stdout?.on("data", (data) => {
-      console.log(`Worker ${jobId} stdout: ${data}`);
-    });
-
-    pythonProcess.stderr?.on("data", (data) => {
-      console.error(`Worker ${jobId} stderr: ${data}`);
-    });
-
     // Handle spawn errors (e.g., python not found)
     pythonProcess.on("error", async (err) => {
-      console.error(`Worker ${jobId} failed to start:`, err);
       runningProcesses.delete(jobId);
       try {
         await db.query(
@@ -94,8 +82,6 @@ async function startWorkerProcess(
     });
 
     pythonProcess.on("close", async (code) => {
-      console.log(`Worker process for job ${jobId} exited with code ${code}`);
-
       // Remove from tracking
       runningProcesses.delete(jobId);
 
@@ -124,8 +110,6 @@ async function startWorkerProcess(
 
     return true;
   } catch (error) {
-    console.error("Failed to start worker:", error);
-
     // Remove from tracking on failure
     runningProcesses.delete(jobId);
 
@@ -253,7 +237,7 @@ export async function POST(request: NextRequest) {
             );
           }
         } catch (e) {
-          console.warn("stop: failed to mark run completed", e);
+          // Silently handle errors
         }
 
         // Update source status to stopped so UI reflects stopped
@@ -283,9 +267,6 @@ export async function POST(request: NextRequest) {
           ["paused", parseInt(jobId)]
         );
 
-        console.log(
-          `🛑 Pause requested for job ${jobId} - UI paused immediately; worker will finish current block`
-        );
         break;
 
       case "resume":
@@ -305,9 +286,6 @@ export async function POST(request: NextRequest) {
           [parseInt(jobId)]
         );
 
-        console.log(
-          `▶️ Resume requested for job ${jobId} - paused worker will continue from next block`
-        );
         break;
 
       case "run_now": {
@@ -356,13 +334,11 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        // Log but do not block on strict validation; worker can handle
+        // Validate URL format (non-blocking)
         try {
           const u = String(effectiveUrl).trim();
           if (!/savee\.(?:it|com)\//i.test(u)) {
-            console.warn(
-              `[run_now] non-standard URL for source ${sourceId}: ${u}`
-            );
+            // Non-standard URL, but allow it
           }
         } catch {}
 
@@ -375,14 +351,8 @@ export async function POST(request: NextRequest) {
         if (activeRun.rows.length > 0) {
           const existing = activeRun.rows[0];
           const existingStatus = existing.status as string;
-          console.log(
-            `[run_now] found existing ${existingStatus} run for source ${sourceId}`
-          );
           // Reuse pending; if running/paused and not forcing, return idempotent success
           if (existingStatus === "pending") {
-            console.log(
-              `[run_now] reusing existing pending run ${existing.id}`
-            );
             runId = existing.id;
           } else if (
             (existingStatus === "running" || existingStatus === "paused") &&
@@ -414,7 +384,7 @@ export async function POST(request: NextRequest) {
                 ["Force run requested - previous run cancelled", existing.id]
               );
             } catch (e) {
-              console.warn("force-cancel failed", e);
+              // Silently handle errors
             }
           }
         }
@@ -527,15 +497,6 @@ export async function POST(request: NextRequest) {
           if (externalRunner) {
             // Do not spawn; return run details for external runner
             const dispatched = await triggerGithubMonitor(String(sourceId));
-            const hasToken = !!(
-              process.env.GITHUB_ACTIONS_TOKEN ||
-              process.env.GITHUB_DISPATCH_TOKEN
-            );
-            const repoName = process.env.GITHUB_REPO || "";
-            const refName = process.env.GITHUB_REF || "main";
-            console.log(
-              `[run_now] dispatched=${dispatched}, token=${hasToken}, repo=${!!repoName}`
-            );
             return NextResponse.json({
               success: true,
               jobId,
@@ -545,7 +506,6 @@ export async function POST(request: NextRequest) {
               message: dispatched
                 ? "Run enqueued and monitor dispatched"
                 : "Run enqueued as pending for external runner",
-              debug: { hasToken, hasRepo: !!repoName, ref: refName },
             });
           }
 

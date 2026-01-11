@@ -13,14 +13,20 @@ export default async function MetricsPage() {
   }
 
   return (
-    <div className="flex flex-col h-full w-full p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Metrics</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          System metrics and job statistics
-        </p>
+    <div className="flex flex-col h-full w-full overflow-y-auto">
+      <div className="flex flex-col border-t border-border bg-background min-h-full">
+        <div className="flex flex-col p-6 lg:p-8 pb-8">
+          <div className="mb-6 shrink-0">
+            <h1 className="text-3xl font-bold tracking-tight">Metrics</h1>
+            <p className="text-muted-foreground text-sm mt-2">
+              Comprehensive system metrics, database statistics, and storage analytics
+            </p>
+          </div>
+          <div className="flex-1">
+            <MetricsDashboard />
+          </div>
+        </div>
       </div>
-      <MetricsDashboard />
     </div>
   );
 }

@@ -38,12 +38,10 @@ async function deleteObjectsFromR2(r2Keys: string[]): Promise<boolean> {
       });
 
       await r2Client.send(deleteCommand);
-      console.log(`Deleted batch of ${batch.length} objects from R2`);
     }
 
     return true;
   } catch (error) {
-    console.error("R2 deletion error:", error);
     return false;
   }
 }
@@ -86,7 +84,6 @@ async function deletePrefixFromR2(prefix: string): Promise<number> {
     } while (token);
     return deleted;
   } catch (e) {
-    console.warn("R2 prefix delete warning:", e);
     return 0;
   }
 }
@@ -122,12 +119,6 @@ export async function DELETE(
       );
     }
 
-    console.log(`Attempting to delete source with ID: ${sourceId}, options:`, {
-      deleteFromDb,
-      deleteFromR2,
-      deleteUsers,
-    });
-
     // Get database connection for direct SQL queries
     const db = (payload.db as any).pool;
 
@@ -148,10 +139,6 @@ export async function DELETE(
         );
 
         if (blocksToDelete.rows.length > 0) {
-          console.log(
-            `Deleting ${blocksToDelete.rows.length} files from R2...`
-          );
-
           // Extract all R2 keys and their variants (original, thumb, small, medium, large)
           const r2Keys: string[] = [];
           for (const row of blocksToDelete.rows) {
@@ -179,12 +166,7 @@ export async function DELETE(
 
           // Actually delete from R2
           const uniqueKeys = Array.from(new Set(r2Keys));
-          const deleteSuccess = await deleteObjectsFromR2(uniqueKeys);
-          if (deleteSuccess) {
-            console.log(`Successfully deleted ${r2Keys.length} files from R2`);
-          } else {
-            console.log(`R2 deletion completed with some errors`);
-          }
+          await deleteObjectsFromR2(uniqueKeys);
         }
 
         // Best-effort prefix cleanup for user sources (and legacy layout)
@@ -194,14 +176,9 @@ export async function DELETE(
         ) {
           const n1 = await deletePrefixFromR2(`users/${src.username}/`);
           const n2 = await deletePrefixFromR2(`${src.username}/`);
-          if (n1 + n2 > 0) {
-            console.log(
-              `Deleted leftover prefix objects for user ${src.username}: ${n1 + n2}`
-            );
-          }
         }
       } catch (r2Error) {
-        console.error("R2 deletion error:", r2Error);
+        // Silently handle errors
         // Continue with other deletions even if R2 fails
       }
     }
@@ -282,16 +259,12 @@ export async function DELETE(
             try {
               await deleteObjectsFromR2(avatarKeys);
             } catch (e) {
-              console.warn("Failed to delete orphan avatar keys from R2", e);
+              // Silently handle errors
             }
           }
         }
 
-        console.log(
-          `Deleted user relationships and orphaned users for source ${sourceId}`
-        );
       } catch (userError) {
-        console.error("User deletion error:", userError);
         // Continue with other deletions
       }
     }
@@ -338,10 +311,6 @@ export async function DELETE(
         ]);
 
         await db.query("COMMIT");
-
-        console.log(
-          `Deleted source ${sourceId} (blocks=${delBlocks.rowCount}, runs=${delRuns.rowCount}, source=${delSource.rowCount})`
-        );
       } catch (deleteError: unknown) {
         try {
           await db.query("ROLLBACK");
@@ -367,7 +336,6 @@ export async function DELETE(
       }
     } catch (e) {
       // It's fine if it was already removed via SQL; ignore
-      console.warn("Payload source delete (best-effort) warning:", e as any);
     }
 
     return NextResponse.json({
@@ -376,7 +344,6 @@ export async function DELETE(
       deleted: { db: deleteFromDb, r2: deleteFromR2, users: deleteUsers },
     });
   } catch (error: unknown) {
-    console.error("Error deleting job:", error);
     return NextResponse.json(
       {
         success: false,

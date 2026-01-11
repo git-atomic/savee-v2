@@ -283,9 +283,6 @@ export async function GET(request: NextRequest) {
         }
 
         const runIdStr = latestRun?.id?.toString();
-        if (runIdStr) {
-          console.log(`[jobs API] Source ${source.id} (${source.url}) has runId=${runIdStr}, status=${latestRun?.status}`);
-        }
         
         return {
           id: source.id.toString(),

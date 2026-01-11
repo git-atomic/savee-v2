@@ -227,7 +227,6 @@ export function JobsList() {
           throw new Error("Failed to fetch jobs");
         }
       } catch (error) {
-        console.error("Error fetching jobs:", error);
         toast.error(
           error instanceof Error ? error.message : "Failed to fetch jobs"
         );

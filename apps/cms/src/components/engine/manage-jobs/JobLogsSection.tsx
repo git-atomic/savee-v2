@@ -33,18 +33,13 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
 
   const fetchSnapshot = React.useCallback(async (runId?: string) => {
     if (!runId) {
-      console.warn(`[JobLogsSection] No runId provided, cannot fetch logs`);
       return;
     }
     const runIdNum = typeof runId === "string" ? parseInt(runId, 10) : runId;
     if (!Number.isFinite(runIdNum)) {
-      console.error(`[JobLogsSection] Invalid runId: ${runId}`);
       return;
     }
     try {
-      console.log(
-        `[JobLogsSection] Fetching logs for runId=${runId} (parsed: ${runIdNum})`
-      );
       const res = await fetch(
         `/api/engine/logs?runId=${encodeURIComponent(runIdNum)}`,
         { cache: "no-store" }
@@ -52,25 +47,10 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
       if (res.ok) {
         const data = await res.json();
         const logsArray = Array.isArray(data.logs) ? data.logs : [];
-        console.log(`[JobLogsSection] API response for runId=${runIdNum}:`, {
-          success: data.success,
-          logsCount: logsArray.length,
-          hasLogs: logsArray.length > 0,
-          firstLog: logsArray[0] || null,
-        });
         setLogs(logsArray);
-      } else {
-        const errorText = await res.text().catch(() => "");
-        console.error(
-          `[JobLogsSection] API error ${res.status} for runId=${runIdNum}:`,
-          errorText
-        );
       }
     } catch (error) {
-      console.error(
-        `[JobLogsSection] Failed to fetch logs for runId=${runId}:`,
-        error
-      );
+      // Silently handle errors
     }
   }, []);
 
@@ -128,7 +108,7 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
         reconnectRef.current = setTimeout(() => attachStream(runId), 2000);
       };
     } catch (error) {
-      console.error("Failed to attach log stream:", error);
+      // Silently handle errors
     }
   }, []);
 
