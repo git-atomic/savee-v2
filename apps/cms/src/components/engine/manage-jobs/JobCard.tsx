@@ -203,8 +203,8 @@ function CollapsibleUrlList({ urls }: { urls: string[] }) {
 
   return (
     <div className="space-y-0">
-      {/* First URL - Always fully visible */}
-      <div className="flex items-center gap-2">
+      {/* First URL - Always fully visible, single line height */}
+      <div className="flex items-center gap-2 min-h-[1.5rem]">
         <a
           href={firstUrl}
           target="_blank"
@@ -226,25 +226,6 @@ function CollapsibleUrlList({ urls }: { urls: string[] }) {
           </button>
         )}
       </div>
-
-      {!isExpanded && hasMore && (
-        <div className="relative mt-1">
-          {/* Second URL - Significantly faded (barely visible) */}
-          {urls[1] && (
-            <a
-              href={urls[1]}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-sm font-mono text-muted-foreground/40 hover:text-foreground transition-colors group/link"
-              title={urls[1]}
-              style={{ opacity: 0.3 }}
-            >
-              <span className="truncate">{urls[1]}</span>
-              <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-20" />
-            </a>
-          )}
-        </div>
-      )}
 
       {/* Expanded state - show all URLs */}
       {isExpanded && hasMore && (
