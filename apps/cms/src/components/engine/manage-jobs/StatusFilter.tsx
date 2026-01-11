@@ -58,10 +58,10 @@ export function StatusFilter({
             type="button"
             onClick={() => handleToggle(option.key)}
             className={cn(
-              "inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all",
+              "cn-badge inline-flex items-center gap-2 border px-3 py-1.5 text-xs font-medium transition-all",
               isSelected
-                ? "border-border bg-background text-foreground shadow-sm"
-                : "border-border/50 bg-input/30 text-muted-foreground hover:bg-input/50 hover:text-foreground"
+                ? "border-border bg-background text-foreground"
+                : "border-border/50 bg-card/50 text-muted-foreground hover:bg-card hover:text-foreground"
             )}
           >
             <span

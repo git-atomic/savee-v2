@@ -89,8 +89,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.645 0.1978 41.15);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.87 0.00 0);
+  --primary-foreground: oklch(0.205 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -125,5 +125,28 @@
     font-feature-settings: "cv11" 1, "ss01" 1, "ss02" 1;
     font-variant-numeric: tabular-nums;
     font-optical-sizing: auto;
+  }
+
+  /* Maia style border-radius rules */
+  .style-maia .cn-button {
+    border-radius: calc(var(--radius) + 16px);
+  }
+
+  .style-maia .cn-input {
+    border-radius: calc(var(--radius) + 16px);
+  }
+
+  .style-maia .cn-select {
+    border-radius: calc(var(--radius) + 16px);
+  }
+
+  .style-maia .cn-badge {
+    border-radius: calc(var(--radius) + 16px);
+  }
+
+  /* Button group border-radius handling */
+  .style-maia .cn-button-group-orientation-horizontal > [data-slot]:not(:has(~[data-slot])) {
+    border-top-right-radius: calc(var(--radius) + 16px) !important;
+    border-bottom-right-radius: calc(var(--radius) + 16px) !important;
   }
 }

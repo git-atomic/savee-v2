@@ -37,7 +37,7 @@ interface JobData {
   id: string;
   runId?: string; // Run ID for fetching logs
   url: string;
-  sourceType: "home" | "pop" | "user";
+  sourceType: "home" | "pop" | "user" | "blocks";
   username?: string;
   maxItems: number;
   status:
@@ -75,73 +75,175 @@ export async function GET(request: NextRequest) {
     }
     const payload = await getPayload({ config });
 
-    // Get sources with their latest runs
+    // Get sources with their latest runs - OPTIMIZED: batch fetch all runs at once
     const sources = await payload.find({
       collection: "sources",
       limit: 100,
       sort: "-createdAt",
     });
 
+    const sourceIds = sources.docs.map((s) => s.id);
+    
+    // Batch fetch all latest runs in a single query using raw SQL for performance
+    const db = (payload.db as any).pool;
+    let latestRunsMap = new Map<number, any>();
+    let recentRunsMap = new Map<number, any[]>();
+    let blockUrlsMap = new Map<number, string[]>(); // Cache block URLs for blocks sources
+    
+    if (sourceIds.length > 0) {
+      try {
+        // Get latest run for each source in one query
+        const latestRunsQuery = await db.query(`
+          SELECT DISTINCT ON (r.source_id) 
+            r.id,
+            r.source_id,
+            r.status,
+            r.counters,
+            r.created_at,
+            r.updated_at,
+            r.started_at,
+            r.completed_at,
+            r.max_items,
+            r.error_message
+          FROM runs r
+          WHERE r.source_id = ANY($1::int[])
+          ORDER BY r.source_id, r.created_at DESC
+        `, [sourceIds]);
+        
+        for (const row of latestRunsQuery.rows) {
+          let counters = row.counters;
+          if (typeof counters === 'string') {
+            try {
+              counters = JSON.parse(counters);
+            } catch {
+              counters = { found: 0, uploaded: 0, errors: 0, skipped: 0 };
+            }
+          }
+          latestRunsMap.set(row.source_id, {
+            id: row.id,
+            source: row.source_id,
+            status: row.status,
+            counters: counters || { found: 0, uploaded: 0, errors: 0, skipped: 0 },
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+            startedAt: row.started_at,
+            completedAt: row.completed_at,
+            maxItems: row.max_items,
+            errorMessage: row.error_message,
+          });
+        }
+        
+        // Get recent 3 runs per source for backoff calculation (batch)
+        const recentRunsQuery = await db.query(`
+          SELECT r.source_id, r.status, r.counters
+          FROM (
+            SELECT r.*,
+                   ROW_NUMBER() OVER (PARTITION BY r.source_id ORDER BY r.created_at DESC) as rn
+            FROM runs r
+            WHERE r.source_id = ANY($1::int[])
+          ) r
+          WHERE r.rn <= 3
+          ORDER BY r.source_id, r.created_at DESC
+        `, [sourceIds]);
+        
+        for (const row of recentRunsQuery.rows) {
+          if (!recentRunsMap.has(row.source_id)) {
+            recentRunsMap.set(row.source_id, []);
+          }
+          let counters = row.counters;
+          if (typeof counters === 'string') {
+            try {
+              counters = JSON.parse(counters);
+            } catch {
+              counters = {};
+            }
+          }
+          recentRunsMap.get(row.source_id)!.push({
+            status: row.status,
+            counters: counters || {},
+          });
+        }
+      } catch (dbError) {
+        console.error("[jobs] Batch query error, falling back to individual queries:", dbError);
+        // Fallback: if batch query fails, continue with individual queries (slower but works)
+      }
+      
+      // Batch fetch block URLs for all blocks sources
+      try {
+        const blocksSources = sources.docs.filter((s: any) => s.sourceType === "blocks");
+        if (blocksSources.length > 0) {
+          const blocksSourceIds = blocksSources.map((s: any) => s.id);
+          const blockUrlsQuery = await db.query(`
+            SELECT source_id, url
+            FROM blocks
+            WHERE source_id = ANY($1::int[])
+            ORDER BY source_id, url
+          `, [blocksSourceIds]);
+          
+          for (const row of blockUrlsQuery.rows) {
+            if (!blockUrlsMap.has(row.source_id)) {
+              blockUrlsMap.set(row.source_id, []);
+            }
+            if (row.url && !blockUrlsMap.get(row.source_id)!.includes(row.url)) {
+              blockUrlsMap.get(row.source_id)!.push(row.url);
+            }
+          }
+          
+          // Limit to 50 URLs per source for display
+          for (const [sourceId, urls] of blockUrlsMap.entries()) {
+            if (urls.length > 50) {
+              blockUrlsMap.set(sourceId, urls.slice(0, 50));
+            }
+          }
+        }
+      } catch (blockError) {
+        console.error("[jobs] Failed to batch fetch block URLs:", blockError);
+      }
+    }
+
     const jobs: JobData[] = await Promise.all(
       sources.docs.map(async (source) => {
-        // Get latest run for this source
-        const runs = await payload.find({
-          collection: "runs",
-          where: {
-            source: { equals: source.id },
-          },
-          limit: 1,
-          sort: "-createdAt",
-        });
-
-        const latestRun = runs.docs[0];
-        const latestUpdatedAt = latestRun?.updatedAt
-          ? new Date(latestRun.updatedAt).getTime()
+        // Get latest run from map, or fallback to individual query if batch failed
+        let latestRun = latestRunsMap.get(source.id);
+        if (!latestRun && sourceIds.length > 0) {
+          // Fallback: individual query if batch didn't work
+          try {
+            const runs = await payload.find({
+              collection: "runs",
+              where: { source: { equals: source.id } },
+              limit: 1,
+              sort: "-createdAt",
+            });
+            latestRun = runs.docs[0] as any;
+          } catch {}
+        }
+        
+        const latestUpdatedAt = latestRun?.updatedAt || latestRun?.updated_at
+          ? new Date((latestRun.updatedAt || latestRun.updated_at) as any).getTime()
           : undefined;
         const isStaleRunning =
           latestRun?.status === "running" &&
           typeof latestUpdatedAt === "number" &&
           Date.now() - latestUpdatedAt > 5 * 60 * 1000; // 5 minutes stale threshold
 
-        // Backfill persisted filter fields on existing blocks (best-effort, lightweight)
-        try {
-          const db = (payload.db as any).pool;
-          await db.query(
-            `UPDATE blocks b
-             SET origin_text = COALESCE(origin_text,
-               CASE WHEN s.source_type = 'user' THEN s.username ELSE s.source_type END),
-               saved_by_usernames = COALESCE(saved_by_usernames, sub.usernames)
-             FROM sources s
-             LEFT JOIN (
-               SELECT ub.block_id, string_agg(u.username, ',') AS usernames
-               FROM user_blocks ub
-               JOIN savee_users u ON u.id = ub.user_id
-               GROUP BY ub.block_id
-             ) AS sub ON sub.block_id = b.id
-             WHERE b.source_id = s.id AND b.source_id = $1`,
-            [source.id]
-          );
-        } catch {}
+        // REMOVED: Auto-reconcile - this was doing a DB query for every completed run
+        // This should be done via a background job or only when explicitly requested
+        // The reconciliation logic is still available via the /reconcile endpoint
 
-        // Compute backoff multiplier similar to monitor
+        // REMOVED: Backfill update - this was running on every request and slowing things down
+        // This should be done via a background job or migration, not on every API call
+
+        // Compute backoff multiplier using pre-fetched recent runs
         let backoffMultiplier = 1;
         try {
-          const recent = await payload.find({
-            collection: "runs",
-            where: { source: { equals: source.id } },
-            limit: 3,
-            sort: "-createdAt",
-          });
+          const recent = recentRunsMap.get(source.id) || [];
           let errorCount = 0;
           let zeroUploadCount = 0;
-          for (const r of recent.docs) {
-            const st = String((r as any).status || "").toLowerCase();
+          for (const r of recent) {
+            const st = String(r.status || "").toLowerCase();
             if (st === "error") errorCount += 1;
             try {
-              const c =
-                typeof (r as any).counters === "string"
-                  ? JSON.parse((r as any).counters)
-                  : (r as any).counters;
+              const c = r.counters || {};
               if (c && Number(c.uploaded) === 0) zeroUploadCount += 1;
             } catch {}
           }
@@ -161,8 +263,8 @@ export async function GET(request: NextRequest) {
             ? Math.max(10, (source as any).intervalSeconds)
             : null;
         const baseInterval = overrideInterval ?? envMin;
-        const completedAtMs = latestRun?.completedAt
-          ? new Date(latestRun.completedAt).getTime()
+          const completedAtMs = latestRun?.completedAt || latestRun?.completed_at
+          ? new Date((latestRun.completedAt || latestRun.completed_at) as any).getTime()
           : undefined;
         const nextRunIso = completedAtMs
           ? new Date(
@@ -170,11 +272,26 @@ export async function GET(request: NextRequest) {
             ).toISOString()
           : undefined;
 
+        // For blocks type, use pre-fetched block URLs from batch query
+        let displayUrl = source.url;
+        if ((source as any).sourceType === "blocks") {
+          const blockUrls = blockUrlsMap.get(source.id) || [];
+          if (blockUrls.length > 0) {
+            // Use comma-separated URLs for blocks type so they can be parsed and displayed
+            displayUrl = blockUrls.join(",");
+          }
+        }
+
+        const runIdStr = latestRun?.id?.toString();
+        if (runIdStr) {
+          console.log(`[jobs API] Source ${source.id} (${source.url}) has runId=${runIdStr}, status=${latestRun?.status}`);
+        }
+        
         return {
           id: source.id.toString(),
-          runId: latestRun?.id?.toString(), // Add run ID for logs
-          url: source.url,
-          sourceType: source.sourceType as "home" | "pop" | "user",
+          runId: runIdStr, // Add run ID for logs
+          url: displayUrl,
+          sourceType: source.sourceType as "home" | "pop" | "user" | "blocks",
           username: source.username || undefined,
           maxItems: (typeof latestRun?.maxItems === "number"
             ? latestRun?.maxItems
@@ -197,26 +314,15 @@ export async function GET(request: NextRequest) {
                         ? (source as any).sourceType === "blocks" ? "completed" : "active"
                         : (source.status as any),
           runStatus: isStaleRunning ? "stale" : (latestRun?.status as string), // expose stale
-          counters:
-            typeof latestRun?.counters === "string"
-              ? (JSON.parse(latestRun.counters) as {
-                  found: number;
-                  uploaded: number;
-                  errors: number;
-                })
-              : (latestRun?.counters as {
-                  found: number;
-                  uploaded: number;
-                  errors: number;
-                }) || { found: 0, uploaded: 0, errors: 0 },
-          lastRun: latestRun?.completedAt || latestRun?.startedAt || undefined,
+          counters: latestRun?.counters || { found: 0, uploaded: 0, errors: 0 },
+          lastRun: latestRun?.completedAt || latestRun?.completed_at || latestRun?.startedAt || latestRun?.started_at || undefined,
           nextRun: nextRunIso,
           // Echo schedule so UI can show/edit current values
           intervalSeconds: (source as any).intervalSeconds ?? undefined,
           disableBackoff: (source as any).disableBackoff ?? undefined,
           effectiveIntervalSeconds: baseInterval,
           backoffMultiplier,
-          error: latestRun?.errorMessage || undefined,
+          error: latestRun?.errorMessage || latestRun?.error_message || undefined,
         };
       })
     );

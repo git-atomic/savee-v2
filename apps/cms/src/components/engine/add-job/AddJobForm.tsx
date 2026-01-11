@@ -5,7 +5,7 @@ import { useState, useMemo } from "react";
 import { JobTextarea } from "./JobTextarea";
 import { JobConfigPanel } from "./JobConfigPanel";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import {
   parseSaveeUrl,
   detectBulkUrls,
@@ -17,7 +17,6 @@ export function AddJobForm() {
   const [sourceType, setSourceType] = useState<SourceType>("user");
   const [maxItems, setMaxItems] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { toast } = useToast();
 
   // Detect bulk URLs and single URL type
   const detection = useMemo(() => {
@@ -94,11 +93,7 @@ export function AddJobForm() {
     // Validate input
     const validation = validateInput();
     if (!validation.isValid) {
-      toast({
-        variant: "destructive",
-        title: "Validation Error",
-        description: validation.error,
-      });
+      toast.error(validation.error || "Validation Error");
       return;
     }
 
@@ -127,15 +122,11 @@ export function AddJobForm() {
 
         // Handle capacity limit errors
         if (response.status === 429 && data.details) {
-          toast({
-            variant: "destructive",
-            title: "Capacity Limit Reached",
+          toast.error("Capacity Limit Reached", {
             description: errorMessage,
           });
         } else {
-          toast({
-            variant: "destructive",
-            title: "Failed to Start Job",
+          toast.error("Failed to Start Job", {
             description: errorMessage,
           });
         }
@@ -152,8 +143,7 @@ export function AddJobForm() {
                 data.username ? ` from user ${data.username}` : ""
               }`);
 
-        toast({
-          title: "Job Started",
+        toast.success("Job Started", {
           description: successMessage,
         });
 
@@ -162,11 +152,7 @@ export function AddJobForm() {
         setMaxItems(0);
         setSourceType("user");
       } else {
-        toast({
-          variant: "destructive",
-          title: "Failed to Start Job",
-          description: data.error || "An unexpected error occurred",
-        });
+        toast.error(data.error || "Failed to Start Job");
       }
     } catch (error) {
       // Network or parsing errors
@@ -175,11 +161,7 @@ export function AddJobForm() {
           ? error.message
           : "Network error. Please check your connection and try again.";
 
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: errorMessage,
-      });
+      toast.error(errorMessage);
     } finally {
       setIsSubmitting(false);
     }

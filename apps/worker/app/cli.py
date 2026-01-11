@@ -27,8 +27,10 @@ from app.models import Source, Run, Block, SaveeUser, UserBlock
 from app.models.sources import SourceTypeEnum, SourceStatusEnum
 from app.models.runs import RunKindEnum, RunStatusEnum
 from app.models.blocks import BlockMediaTypeEnum, BlockStatusEnum
-from app.scraper.savee import SaveeScraper
+from app.scraper.savee import SaveeScraper, load_cookies_from_env, load_storage_state_from_env
 from app.storage.r2 import R2Storage
+from crawl4ai import AsyncWebCrawler, BrowserConfig
+from urllib.parse import urlsplit
 import re
 from datetime import timezone
 import json
@@ -203,7 +205,11 @@ async def _item_needs_reupload(session: AsyncSession, external_id: str) -> bool:
 
 
 def _detect_source_type(url: str) -> SourceTypeEnum:
-    """Detect source type from URL."""
+    """Detect source type from URL.
+    
+    Note: For existing sources, use _detect_source_type_from_blocks() as a fallback
+    to check if a source should be 'blocks' type based on its associated blocks.
+    """
     if not url:
         return SourceTypeEnum.user
     
@@ -221,6 +227,31 @@ def _detect_source_type(url: str) -> SourceTypeEnum:
                             "savee.com/pop", "savee.com/trending", "savee.com/popular"]):
         return SourceTypeEnum.pop
     return SourceTypeEnum.user
+
+
+async def _detect_source_type_from_blocks(session: AsyncSession, source_id: int) -> SourceTypeEnum | None:
+    """
+    Fallback detection: Check if a source should be 'blocks' type by examining its blocks.
+    
+    Returns SourceTypeEnum.blocks if the source has blocks with /i/ URLs, None otherwise.
+    This is useful for correcting sources that were created before the blocks type existed.
+    """
+    from sqlalchemy import text
+    
+    query = text("""
+        SELECT COUNT(*) 
+        FROM blocks 
+        WHERE source_id = :source_id 
+        AND url LIKE '%/i/%'
+        LIMIT 1
+    """)
+    
+    result = await session.execute(query, {'source_id': source_id})
+    count = result.scalar()
+    
+    if count and count > 0:
+        return SourceTypeEnum.blocks
+    return None
 
 async def _send_simple_log_to_cms(run_id: int, log_data: dict):
     """Send log entry to CMS API for real-time display"""
@@ -888,9 +919,13 @@ async def _upsert_block(
 
 
 async def create_or_get_source(session: AsyncSession, url: str) -> int:
-    """Create or get source from URL."""
+    """Create or get source from URL.
+    
+    If an existing source is found, this function will also check if it should be
+    corrected to 'blocks' type based on its associated blocks (fallback detection).
+    """
     source_type = _detect_source_type(url)
-    username = _extract_username(url) if source_type == 'user' else None
+    username = _extract_username(url) if source_type == SourceTypeEnum.user else None
     
     # Try to find existing source
     result = await session.execute(
@@ -899,6 +934,20 @@ async def create_or_get_source(session: AsyncSession, url: str) -> int:
     source = result.scalar_one_or_none()
     
     if source:
+        # Fallback detection: If source is marked as 'home' but has blocks with /i/ URLs,
+        # it should be 'blocks' type. This helps correct old sources created before blocks type existed.
+        if source.source_type == SourceTypeEnum.home:
+            detected_type = await _detect_source_type_from_blocks(session, source.id)
+            if detected_type == SourceTypeEnum.blocks:
+                logger.info(f"Correcting source {source.id} type from 'home' to 'blocks' based on blocks analysis")
+                source.source_type = SourceTypeEnum.blocks
+                # Update URL to bulk_import_ placeholder if it's not already one
+                if 'bulk_import_' not in source.url.lower():
+                    import time
+                    timestamp = int(time.time())
+                    source.url = f"https://savee.com/bulk_import_{timestamp}"
+                await session.commit()
+        
         return source.id
     
     # Create new source
@@ -1063,47 +1112,108 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
             # Get the appropriate iterator for real-time processing
             if bulk_urls:
                 # For bulk, we iterate URLs directly to handle errors per URL correctly
+                # Create crawler for bulk processing
+                storage_state = load_storage_state_from_env()
+                cookies = load_cookies_from_env()
+                browser_cfg = BrowserConfig(
+                    headless=True,
+                    verbose=False,
+                    storage_state=storage_state,
+                    cookies=cookies,
+                )
+                
                 processed_count = 0
-                for item_url in bulk_urls:
-                    if await _check_if_paused(session, source_id):
-                        await _handle_graceful_pause(session, run_id)
-                        if not await _wait_for_resume(session, source_id, run_id): break
+                async with AsyncWebCrawler(config=browser_cfg) as crawler:
+                    # Login only if no storage_state/cookies provided and credentials are set
+                    if not storage_state and not cookies and settings.SAVE_EMAIL and settings.SAVE_PASSWORD and bulk_urls:
+                        sp0 = urlsplit(bulk_urls[0])
+                        base_url0 = f"{sp0.scheme}://{sp0.netloc}"
+                        await scraper._ensure_login(crawler, base_url0, settings.SAVE_EMAIL, settings.SAVE_PASSWORD)
                     
-                    processed_count += 1
-                    try:
-                        logger.info(f"Bulk processing {processed_count}/{len(bulk_urls)}: {item_url}")
-                        # Scrape single item
-                        item = await scraper._scrape_item_details(crawler, item_url)
-                        if not item:
-                            raise ValueError(f"Failed to scrape details for {item_url}")
+                    for item_url in bulk_urls:
+                        if await _check_if_paused(session, source_id):
+                            await _handle_graceful_pause(session, run_id)
+                            if not await _wait_for_resume(session, source_id, run_id): break
                         
-                        # Process item (re-using the logic from the main loop but for exactly one item)
-                        # We simulate the loop body here for the bulk URLs
+                        processed_count += 1
                         r2_key = None
-                        base_key = _generate_r2_key(url, item.external_id)
-                        if getattr(item, 'media_url', None):
-                            if getattr(item, 'media_type', 'image') == 'image':
-                                r2_key = await storage.upload_image(item.media_url, base_key)
+                        upload_succeeded = False
+                        block_upsert_succeeded = False
+                        
+                        try:
+                            logger.info(f"Bulk processing {processed_count}/{len(bulk_urls)}: {item_url}")
+                            # Scrape single item
+                            item = await scraper._scrape_item_details(crawler, item_url)
+                            if not item:
+                                raise ValueError(f"Failed to scrape details for {item_url}")
+                            
+                            # Process item (re-using the logic from the main loop but for exactly one item)
+                            # We simulate the loop body here for the bulk URLs
+                            base_key = _generate_r2_key(url, item.external_id)
+                            
+                            # Upload media first (before DB operations)
+                            if getattr(item, 'media_url', None):
+                                try:
+                                    if getattr(item, 'media_type', 'image') == 'image':
+                                        r2_key = await storage.upload_image(item.media_url, base_key)
+                                    else:
+                                        poster = getattr(item, 'thumbnail_url', None) or getattr(item, 'og_image_url', None)
+                                        r2_key = await storage.upload_video(item.media_url, base_key, poster)
+                                    upload_succeeded = True
+                                except Exception as upload_err:
+                                    logger.error(f"Upload failed for {item_url}: {upload_err}")
+                                    # Upload failed, but continue to try DB upsert (may have existing block)
+                                    r2_key = None
+                            
+                            # Upsert block to database
+                            try:
+                                block_id = await _upsert_block(session, source_id, run_id, item, r2_key)
+                                block_upsert_succeeded = True
+                            except Exception as db_err:
+                                logger.error(f"Block upsert failed for {item_url}: {db_err}")
+                                # If upload succeeded but DB failed, we have a partial state
+                                # Rollback the session to avoid partial commits
+                                await session.rollback()
+                                raise  # Re-raise to be caught by outer exception handler
+                            
+                            # Both upload and DB succeeded - commit the transaction
+                            await session.commit()
+                            
+                            # Update counters based on success
+                            if r2_key and upload_succeeded:
+                                counters['uploaded'] += 1
                             else:
-                                poster = getattr(item, 'thumbnail_url', None) or getattr(item, 'og_image_url', None)
-                                r2_key = await storage.upload_video(item.media_url, base_key, poster)
-                        
-                        block_id = await _upsert_block(session, source_id, run_id, item, r2_key)
-                        await session.commit()
-                        
-                        if r2_key: counters['uploaded'] += 1
-                        else: counters['skipped'] += 1
-                        
-                        counters['found'] = processed_count
-                        await update_run_status(session, run_id, RunStatusEnum.running, counters)
-                        await session.commit()
-                        
-                    except Exception as e:
-                        logger.error(f"Bulk error on {item_url}: {e}")
-                        counters['errors'] += 1
-                        counters['found'] = processed_count
-                        await update_run_status(session, run_id, RunStatusEnum.running, counters)
-                        await session.commit()
+                                counters['skipped'] += 1
+                            
+                            counters['found'] = processed_count
+                            await update_run_status(session, run_id, RunStatusEnum.running, counters)
+                            await session.commit()
+                            
+                        except Exception as e:
+                            logger.error(f"Bulk error on {item_url}: {e}")
+                            logger.error(f"  Upload succeeded: {upload_succeeded}, Block upsert succeeded: {block_upsert_succeeded}")
+                            
+                            # If upload succeeded but processing failed, we have a partial state
+                            # The R2 upload can't be rolled back, but we should log this clearly
+                            if upload_succeeded and not block_upsert_succeeded:
+                                logger.warning(f"  ⚠️  Partial failure: Media uploaded to R2 but block not saved to DB for {item_url}")
+                            
+                            # Rollback any pending DB changes
+                            try:
+                                await session.rollback()
+                            except Exception:
+                                pass
+                            
+                            counters['errors'] += 1
+                            counters['found'] = processed_count
+                            
+                            # Update run status with error count
+                            try:
+                                await update_run_status(session, run_id, RunStatusEnum.running, counters)
+                                await session.commit()
+                            except Exception as status_err:
+                                logger.error(f"Failed to update run status: {status_err}")
+                                await session.rollback()
                 
                 # After bulk loop, skip the main listing loop
                 item_iterator = [] # Empty iterator just to satisfy the next lines
@@ -1489,8 +1599,17 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                 counters['uploaded'] = db_uploaded
                 # processed (found) = exact iterator count
                 counters['found'] = processed_count
-                # skipped = processed - uploaded
-                counters['skipped'] = max(0, processed_count - db_uploaded)
+                # Get tracked skipped count (items that were processed but didn't upload due to dedup/no media)
+                tracked_skipped = counters.get('skipped', 0)
+                # Recalculate errors based on actual results: found = uploaded + skipped + errors
+                # So: errors = found - uploaded - skipped
+                # This ensures errors only reflect items that were actually not uploaded and not skipped
+                calculated_errors = max(0, processed_count - db_uploaded - tracked_skipped)
+                # Use calculated errors (source of truth from DB), but don't go below 0
+                # If items succeeded after errors were counted, this will correct the error count
+                counters['errors'] = calculated_errors
+                # Ensure skipped is accurate (recalculate to maintain consistency)
+                counters['skipped'] = max(0, processed_count - db_uploaded - calculated_errors)
             except Exception as reconcile_err:
                 logger.error(f"Failed to reconcile counters for run {run_id}: {reconcile_err}")
 

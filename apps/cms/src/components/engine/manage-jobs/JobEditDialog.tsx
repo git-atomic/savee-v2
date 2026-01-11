@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import type { SourceType } from "@/lib/url-utils";
 
 interface JobEditDialogProps {
@@ -45,7 +45,6 @@ export function JobEditDialog({
   const [maxItems, setMaxItems] = React.useState(String(currentMaxItems || ""));
   const [sourceType, setSourceType] = React.useState<SourceType>(currentSourceType);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const { toast } = useToast();
 
   React.useEffect(() => {
     if (open) {
@@ -96,19 +95,16 @@ export function JobEditDialog({
         }
       }
 
-      toast({
-        title: "Job Updated",
+      toast.success("Job Updated", {
         description: "Job has been updated successfully",
       });
 
       onOpenChange(false);
       onSuccess();
     } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Update Failed",
-        description: error instanceof Error ? error.message : "Failed to update job",
-      });
+      toast.error(
+        error instanceof Error ? error.message : "Update Failed"
+      );
     } finally {
       setIsSubmitting(false);
     }

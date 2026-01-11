@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'add_blocks_type'
-down_revision = None  # Set to the latest migration if you have one
+down_revision = 'd471ecb2ad8e'  # Depends on clean_optimized_schema which creates the enum
 branch_labels = None
 depends_on = None
 

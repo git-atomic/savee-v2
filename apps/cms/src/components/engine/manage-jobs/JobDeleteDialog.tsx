@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 interface JobDeleteDialogProps {
@@ -36,7 +36,6 @@ export function JobDeleteDialog({
   const [deleteFromR2, setDeleteFromR2] = React.useState(false);
   const [deleteUsers, setDeleteUsers] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
-  const { toast } = useToast();
 
   React.useEffect(() => {
     if (open) {
@@ -85,8 +84,7 @@ export function JobDeleteDialog({
 
       const data = await response.json();
       if (data.success) {
-        toast({
-          title: "Job Deleted",
+        toast.success("Job Deleted", {
           description: "Job has been deleted successfully",
         });
         onOpenChange(false);
@@ -95,11 +93,9 @@ export function JobDeleteDialog({
         throw new Error(data.error || "Failed to delete job");
       }
     } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Delete Failed",
-        description: error instanceof Error ? error.message : "Failed to delete job",
-      });
+      toast.error(
+        error instanceof Error ? error.message : "Delete Failed"
+      );
     } finally {
       setIsDeleting(false);
     }

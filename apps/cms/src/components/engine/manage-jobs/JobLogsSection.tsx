@@ -29,19 +29,48 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
   const logsEndRef = React.useRef<HTMLDivElement>(null);
   const esRef = React.useRef<EventSource | null>(null);
   const pollRef = React.useRef<NodeJS.Timeout | null>(null);
+  const reconnectRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const fetchSnapshot = React.useCallback(async (runId?: string) => {
-    if (!runId) return;
+    if (!runId) {
+      console.warn(`[JobLogsSection] No runId provided, cannot fetch logs`);
+      return;
+    }
+    const runIdNum = typeof runId === "string" ? parseInt(runId, 10) : runId;
+    if (!Number.isFinite(runIdNum)) {
+      console.error(`[JobLogsSection] Invalid runId: ${runId}`);
+      return;
+    }
     try {
-      const res = await fetch(`/api/engine/logs?runId=${encodeURIComponent(runId)}`, {
-        cache: "no-store",
-      });
+      console.log(
+        `[JobLogsSection] Fetching logs for runId=${runId} (parsed: ${runIdNum})`
+      );
+      const res = await fetch(
+        `/api/engine/logs?runId=${encodeURIComponent(runIdNum)}`,
+        { cache: "no-store" }
+      );
       if (res.ok) {
         const data = await res.json();
-        setLogs(Array.isArray(data.logs) ? data.logs : []);
+        const logsArray = Array.isArray(data.logs) ? data.logs : [];
+        console.log(`[JobLogsSection] API response for runId=${runIdNum}:`, {
+          success: data.success,
+          logsCount: logsArray.length,
+          hasLogs: logsArray.length > 0,
+          firstLog: logsArray[0] || null,
+        });
+        setLogs(logsArray);
+      } else {
+        const errorText = await res.text().catch(() => "");
+        console.error(
+          `[JobLogsSection] API error ${res.status} for runId=${runIdNum}:`,
+          errorText
+        );
       }
     } catch (error) {
-      console.error("Failed to fetch logs:", error);
+      console.error(
+        `[JobLogsSection] Failed to fetch logs for runId=${runId}:`,
+        error
+      );
     }
   }, []);
 
@@ -54,11 +83,15 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
         } catch {}
         esRef.current = null;
       }
+      if (reconnectRef.current) {
+        clearTimeout(reconnectRef.current);
+        reconnectRef.current = null;
+      }
+
       const es = new EventSource(
         `/api/engine/logs/stream?runId=${encodeURIComponent(runId)}`
       );
       esRef.current = es;
-
       const push = (p: any) => {
         if (!p || !p.type) return;
         setLogs((prev) => [
@@ -73,26 +106,26 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
           },
         ]);
       };
-
       es.onmessage = (ev) => {
         try {
           push(JSON.parse(ev.data || "{}"));
         } catch {}
       };
-
       es.addEventListener("log", (ev: MessageEvent) => {
         try {
           push(JSON.parse(ev.data || "{}"));
         } catch {}
       });
-
       es.onerror = () => {
+        // Close and attempt a lightweight reconnect after a short backoff
         try {
           es.close();
         } catch {}
         esRef.current = null;
-        // Attempt reconnect after delay
-        setTimeout(() => attachStream(runId), 2000);
+        if (reconnectRef.current) {
+          clearTimeout(reconnectRef.current);
+        }
+        reconnectRef.current = setTimeout(() => attachStream(runId), 2000);
       };
     } catch (error) {
       console.error("Failed to attach log stream:", error);
@@ -109,14 +142,18 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
     if (isOpen && runId) {
       fetchSnapshot(runId);
       attachStream(runId);
-      // Poll periodically as safety net
+      // Also poll periodically as a safety net and after run completes
       if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(() => fetchSnapshot(runId), 3000);
+      pollRef.current = setInterval(() => fetchSnapshot(runId as string), 3000);
     }
     return () => {
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
+      }
+      if (reconnectRef.current) {
+        clearTimeout(reconnectRef.current);
+        reconnectRef.current = null;
       }
       if (esRef.current) {
         try {
@@ -132,11 +169,14 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
     try {
       const el = logsEndRef.current;
       if (!el) return;
-      const viewport = el.closest("[data-radix-scroll-area-viewport]") as HTMLElement | null;
+      const viewport = el.closest(
+        "[data-radix-scroll-area-viewport]"
+      ) as HTMLElement | null;
       if (!viewport) return;
       const threshold = 80;
       const atBottom =
-        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < threshold;
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <
+        threshold;
       if (atBottom) {
         viewport.scrollTop = viewport.scrollHeight;
       }
@@ -147,12 +187,15 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
     if (!isOpen) return;
     const el = logsEndRef.current;
     if (!el) return;
-    const viewport = el.closest("[data-radix-scroll-area-viewport]") as HTMLElement | null;
+    const viewport = el.closest(
+      "[data-radix-scroll-area-viewport]"
+    ) as HTMLElement | null;
     if (!viewport) return;
     const onScroll = () => {
       const threshold = 80;
       const atBottom =
-        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < threshold;
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <
+        threshold;
       setAutoFollow(atBottom);
     };
     viewport.addEventListener("scroll", onScroll, { passive: true });
@@ -172,8 +215,8 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
   };
 
   return (
-    <div className="rounded-lg border bg-card shadow-sm">
-      <div className="sticky top-0 z-10 border-b bg-background/95 px-3 py-3 text-xs backdrop-blur supports-[backdrop-filter]:bg-background/75 rounded-t-lg">
+    <div className="rounded-lg border bg-card">
+      <div className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 text-xs backdrop-blur supports-[backdrop-filter]:bg-background/75 rounded-t-lg">
         <div className="flex items-center justify-between">
           <span className="font-medium">Logs</span>
           <div className="flex items-center gap-3">
@@ -200,7 +243,7 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
         </div>
       </div>
       <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75 rounded-t-lg">
-        <div className="grid grid-cols-[160px_140px_1fr_120px_120px] items-center px-3 py-2 text-xs font-medium text-muted-foreground">
+        <div className="grid grid-cols-[160px_140px_1fr_120px_120px] items-center px-4 py-2.5 text-xs font-medium text-muted-foreground">
           <div>Time</div>
           <div>Stage</div>
           <div>URL</div>
@@ -213,8 +256,23 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
           <TableBody>
             {logs.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                  No logs yet
+                <TableCell
+                  colSpan={5}
+                  className="text-center py-12 text-muted-foreground text-sm"
+                >
+                  <div className="space-y-2">
+                    <div>No logs yet for runId {runId}</div>
+                    <div className="text-xs opacity-70">
+                      {runId ? (
+                        <>
+                          The worker may not have started logging yet, or this
+                          run hasn't produced any logs.
+                        </>
+                      ) : (
+                        <>No run ID available. Start a job to see logs.</>
+                      )}
+                    </div>
+                  </div>
                 </TableCell>
               </TableRow>
             ) : (
@@ -228,24 +286,24 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
                   lower === "ok"
                     ? "success"
                     : raw === "✗" ||
-                        lower === "error" ||
-                        lower === "failed" ||
-                        raw === "❌"
-                      ? "error"
-                      : raw === "⏳" ||
-                          raw === "🕒" ||
-                          lower === "pending" ||
-                          lower === "running" ||
-                          lower === "starting"
-                        ? "pending"
-                        : "pending";
+                      lower === "error" ||
+                      lower === "failed" ||
+                      raw === "❌"
+                    ? "error"
+                    : raw === "⏳" ||
+                      raw === "🕒" ||
+                      lower === "pending" ||
+                      lower === "running" ||
+                      lower === "starting"
+                    ? "pending"
+                    : "pending";
 
                 return (
                   <TableRow key={idx} className="border-0">
-                    <TableCell className="font-mono text-xs text-muted-foreground">
+                    <TableCell className="font-mono text-xs text-muted-foreground py-2.5 px-4">
                       {new Date(log.timestamp).toLocaleTimeString()}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="py-2.5 px-4">
                       <span
                         className={cn(
                           "inline-flex items-center rounded-lg border px-2.5 py-0.5 text-xs font-semibold",
@@ -256,7 +314,7 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
                         {log.type}
                       </span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="py-2.5 px-4">
                       <code
                         className="font-mono text-sm text-muted-foreground block max-w-[420px] truncate"
                         title={log.url || log.message}
@@ -264,8 +322,11 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
                         {log.url || log.message || "—"}
                       </code>
                     </TableCell>
-                    <TableCell className="text-center">
-                      <span className="inline-flex items-center justify-center" aria-label={raw || "status"}>
+                    <TableCell className="text-center py-2.5 px-4">
+                      <span
+                        className="inline-flex items-center justify-center"
+                        aria-label={raw || "status"}
+                      >
                         {norm === "success" ? (
                           <Check className="mx-auto h-4 w-4 text-emerald-500" />
                         ) : norm === "error" ? (
@@ -275,7 +336,7 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
                         )}
                       </span>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
+                    <TableCell className="font-mono text-xs text-muted-foreground py-2.5 px-4">
                       {log.timing || "—"}
                     </TableCell>
                   </TableRow>

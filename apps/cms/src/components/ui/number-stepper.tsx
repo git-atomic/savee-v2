@@ -1,9 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { MinusIcon, PlusIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NumberStepperProps {
@@ -12,9 +12,8 @@ interface NumberStepperProps {
   min?: number;
   max?: number;
   step?: number;
-  className?: string;
-  id?: string;
   disabled?: boolean;
+  className?: string;
 }
 
 export function NumberStepper({
@@ -23,84 +22,98 @@ export function NumberStepper({
   min = 0,
   max,
   step = 1,
-  className,
-  id,
   disabled = false,
+  className,
 }: NumberStepperProps) {
-  const handleDecrement = () => {
-    const newValue = Math.max(min, value - step);
-    onChange(newValue);
-  };
+  const [inputValue, setInputValue] = React.useState(String(value));
+
+  React.useEffect(() => {
+    setInputValue(String(value));
+  }, [value]);
 
   const handleIncrement = () => {
     const newValue =
-      max !== undefined ? Math.min(max, value + step) : value + step;
+      max !== undefined ? Math.min(value + step, max) : value + step;
+    onChange(newValue);
+  };
+
+  const handleDecrement = () => {
+    const newValue = Math.max(value - step, min);
     onChange(newValue);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    if (val === "") {
-      onChange(0);
-      return;
-    }
-    const numValue = parseInt(val, 10);
+    const newValue = e.target.value;
+    setInputValue(newValue);
+
+    const numValue = parseInt(newValue, 10);
     if (!isNaN(numValue)) {
-      let finalValue = numValue;
-      if (min !== undefined && numValue < min) finalValue = min;
-      if (max !== undefined && numValue > max) finalValue = max;
-      onChange(finalValue);
+      let clampedValue = numValue;
+      if (min !== undefined) clampedValue = Math.max(clampedValue, min);
+      if (max !== undefined) clampedValue = Math.min(clampedValue, max);
+      onChange(clampedValue);
+    } else if (newValue === "") {
+      // Allow empty input temporarily
+      setInputValue("");
     }
   };
 
-  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    if (val === "" || isNaN(parseInt(val, 10))) {
-      onChange(min);
+  const handleInputBlur = () => {
+    // Reset to current value if invalid
+    if (inputValue === "" || isNaN(parseInt(inputValue, 10))) {
+      setInputValue(String(value));
     }
   };
+
+  const isDecrementDisabled = disabled || value <= min;
+  const isIncrementDisabled = disabled || (max !== undefined && value >= max);
 
   return (
     <div
       role="group"
       data-slot="button-group"
       className={cn(
-        "flex w-fit items-stretch [&>*]:focus-visible:z-10 [&>*]:focus-visible:relative [&>*:not(:first-child)]:rounded-l-none [&>*:not(:first-child)]:border-l-0 [&>*:not(:last-child)]:rounded-r-none",
+        "cn-button-group flex w-fit items-stretch",
+        "cn-button-group-orientation-horizontal",
+        "[&>*]:focus-visible:z-10 [&>*]:focus-visible:relative",
+        "[&>[data-slot=select-trigger]:not([class*='w-'])]:w-fit",
+        "[&>input]:flex-1",
+        "[&>*:not(:first-child)]:rounded-l-none [&>*:not(:first-child)]:border-l-0",
+        "[&>*:not(:last-child)]:rounded-r-none",
         className
       )}
     >
       <Input
-        data-slot="input"
-        id={id}
         type="text"
         inputMode="numeric"
+        value={inputValue}
+        onChange={handleInputChange}
+        onBlur={handleInputBlur}
         size={3}
         maxLength={3}
-        value={value}
-        onChange={handleInputChange}
-        onBlur={handleBlur}
         disabled={disabled}
-        className="w-auto min-w-[3ch] text-center rounded-r-none"
+        data-slot="input"
+        className="text-center"
       />
       <Button
         type="button"
         variant="outline"
         size="icon"
         onClick={handleDecrement}
-        disabled={disabled || value <= min}
+        disabled={isDecrementDisabled}
         aria-label="Decrement"
       >
-        <Minus className="h-4 w-4" />
+        <MinusIcon className="h-4 w-4" />
       </Button>
       <Button
         type="button"
         variant="outline"
         size="icon"
         onClick={handleIncrement}
-        disabled={disabled || (max !== undefined && value >= max)}
+        disabled={isIncrementDisabled}
         aria-label="Increment"
       >
-        <Plus className="h-4 w-4" />
+        <PlusIcon className="h-4 w-4" />
       </Button>
     </div>
   );
