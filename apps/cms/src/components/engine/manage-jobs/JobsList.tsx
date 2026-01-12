@@ -109,7 +109,7 @@ function EmptyState({
 
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center border border-border bg-card/50 backdrop-blur-sm">
-      <div className="h-20 w-20 rounded-full bg-gradient-to-br from-muted/50 to-muted/30 flex items-center justify-center mb-6 ring-4 ring-muted/20">
+      <div className="h-20 w-20 rounded-full bg-linear-to-br from-muted/50 to-muted/30 flex items-center justify-center mb-6 ring-4 ring-muted/20">
         <Inbox className="h-10 w-10 text-muted-foreground/70" />
       </div>
       <h3 className="text-xl font-semibold mb-2 text-foreground">
@@ -240,11 +240,31 @@ export function JobsList() {
     [toast]
   );
 
-  // Initial load and polling
+  // Initial load and polling (throttled, and paused in background)
   React.useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    let isPageVisible = true;
+
+    const handleVisibilityChange = () => {
+      isPageVisible = !document.hidden;
+    };
+
+    // Initial load
     fetchJobs();
-    const interval = setInterval(() => fetchJobs(), 2000);
-    return () => clearInterval(interval);
+
+    // Poll every 5s while tab is visible
+    interval = setInterval(() => {
+      if (isPageVisible) {
+        fetchJobs();
+      }
+    }, 5000);
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      if (interval) clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [fetchJobs]);
 
   // Filter jobs

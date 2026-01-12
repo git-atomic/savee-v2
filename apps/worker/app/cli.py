@@ -204,6 +204,30 @@ async def _item_needs_reupload(session: AsyncSession, external_id: str) -> bool:
         return False
 
 
+async def _get_item_existing_block_info(
+    session: AsyncSession, external_id: str
+) -> Tuple[bool, bool]:
+    """Return (exists, needs_reupload) for a block with given external_id.
+
+    This combines the global existence + reupload checks into a single query.
+    """
+    try:
+        result = await session.execute(
+            select(Block.r2_key).where(Block.external_id == external_id)
+        )
+        row = result.first()
+        if not row:
+            return False, False
+        r2_key = row[0]
+        exists = True
+        needs_reupload = not bool(r2_key)
+        return exists, needs_reupload
+    except Exception as e:
+        logger.error(
+            f"Error getting existing block info for external_id={external_id}: {e}"
+        )
+        return False, False
+
 def _detect_source_type(url: str) -> SourceTypeEnum:
     """Detect source type from URL.
     
@@ -279,6 +303,46 @@ async def _send_simple_log_to_cms(run_id: int, log_data: dict):
     except Exception:
         # Fail silently if CMS is unavailable
         pass
+
+
+class BatchedLogSender:
+    """Batched log sender to reduce CMS API calls"""
+    def __init__(self, run_id: int, batch_size: int = 10, batch_interval_sec: float = 2.0):
+        self.run_id = run_id
+        self.batch_size = batch_size
+        self.batch_interval_sec = batch_interval_sec
+        self.log_queue: List[dict] = []
+        self.last_send_ts: float = 0.0
+        self._lock = asyncio.Lock()
+    
+    async def add_log(self, log_data: dict, flush_now: bool = False):
+        """Add log to batch. If flush_now=True or batch is full, send immediately."""
+        async with self._lock:
+            self.log_queue.append(log_data)
+            now = time.monotonic()
+            should_flush = (
+                flush_now
+                or len(self.log_queue) >= self.batch_size
+                or (now - self.last_send_ts) >= self.batch_interval_sec
+            )
+            if should_flush and self.log_queue:
+                await self._flush()
+    
+    async def _flush(self):
+        """Send all queued logs to CMS"""
+        if not self.log_queue:
+            return
+        # Send only the most recent log (most important) to reduce overhead
+        # For detailed logs, use the last entry which typically has completion status
+        latest_log = self.log_queue[-1]
+        await _send_simple_log_to_cms(self.run_id, latest_log)
+        self.log_queue.clear()
+        self.last_send_ts = time.monotonic()
+    
+    async def flush(self):
+        """Force flush remaining logs"""
+        async with self._lock:
+            await self._flush()
 
 def _generate_r2_key(url: str, external_id: str) -> str:
     """Generate organized R2 key for blocks based on source type and URL.
@@ -1279,6 +1343,28 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                     pass
                 return (False, "")
 
+            # Avoid hammering the CMS /limits endpoint (it lists the entire R2 bucket).
+            # Default: check every 25 items or every 60s, whichever comes first.
+            try:
+                capacity_check_every = max(1, int(os.getenv('CAPACITY_CHECK_EVERY', '25')))
+            except Exception:
+                capacity_check_every = 25
+            try:
+                capacity_check_interval_sec = float(os.getenv('CAPACITY_CHECK_INTERVAL_SEC', '60'))
+            except Exception:
+                capacity_check_interval_sec = 60.0
+            last_capacity_check_ts: float = 0.0
+            cached_limits: Optional[dict] = None
+
+            # Batched logging to reduce CMS API calls
+            try:
+                log_batch_size = max(1, int(os.getenv('LOG_BATCH_SIZE', '10')))
+                log_batch_interval_sec = float(os.getenv('LOG_BATCH_INTERVAL_SEC', '2.0'))
+            except Exception:
+                log_batch_size = 10
+                log_batch_interval_sec = 2.0
+            batched_logger = BatchedLogSender(run_id, log_batch_size, log_batch_interval_sec)
+
             async with storage:
                 processed_count = 0
                 skipped_count = 0
@@ -1297,7 +1383,18 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                 async for item in item_iterator:
                     # Check capacity between items
                     try:
-                        limits = await _get_limits()
+                        now_ts = time.monotonic()
+                        should_check_capacity = (
+                            processed_count == 0
+                            or (capacity_check_every > 0 and (processed_count % capacity_check_every) == 0)
+                            or (capacity_check_interval_sec > 0 and (now_ts - last_capacity_check_ts) >= capacity_check_interval_sec)
+                        )
+                        limits = cached_limits
+                        if should_check_capacity:
+                            limits = await _get_limits()
+                            cached_limits = limits
+                            last_capacity_check_ts = now_ts
+
                         exceeded, reason = _limits_exceeded(limits)
                         if exceeded:
                             print(f"[CAPACITY] {reason}; stopping run to avoid overage")
@@ -1339,8 +1436,12 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                         continue
 
                     # Skip if already exists globally (across previous runs),
-                    # unless it exists without an R2 key (then re-upload)
-                    if await _item_exists_globally(session, item.external_id) and not await _item_needs_reupload(session, item.external_id):
+                    # unless it exists without an R2 key (then re-upload).
+                    # Use a single batched helper to avoid multiple queries.
+                    exists_globally, needs_reupload = await _get_item_existing_block_info(
+                        session, item.external_id
+                    )
+                    if exists_globally and not needs_reupload:
                         skipped_count += 1
                         counters['skipped'] = skipped_count
                         # Keep 'found' aligned with processed_count in real-time
@@ -1410,96 +1511,28 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                         # Reset old-items streak when we find a new item to process
                         consecutive_old_items = 0
                         
-                        # [FETCH] step - Getting item details
-                        fetch_start = time.time()
-                        print(f"[FETCH]... {item_url}", end=" ", flush=True)
-                        
-                        # Send real-time log to CMS
-                        await _send_simple_log_to_cms(run_id, {
-                            "type": "FETCH",
-                            "url": item_url,
-                            "status": "⏳",
-                            "message": "Fetching item details..."
-                        })
-                        
-                        # Simulate item processing time
-                        await asyncio.sleep(0.1)  # Small delay to show realistic timing
-                        fetch_time = time.time() - fetch_start
-                        print(f"| OK | Time: {fetch_time:.2f}s")
-                        
-                        # Send completion log
-                        await _send_simple_log_to_cms(run_id, {
-                            "type": "FETCH",
-                            "url": item_url,
-                            "status": "✓",
-                            "timing": f"{fetch_time:.2f}s",
-                            "message": "Successfully fetched item details"
-                        })
-                        
-                        # [SCRAPE] step - Processing metadata
-                        scrape_start = time.time()
-                        print(f"[SCRAPE].. {item_url}", end=" ", flush=True)
-                        
-                        # Send real-time log to CMS
-                        await _send_simple_log_to_cms(run_id, {
-                            "type": "SCRAPE",
-                            "url": item_url,
-                            "status": "⏳",
-                            "message": "Processing metadata and content..."
-                        })
-                        
-                        # Process item metadata (already done, just showing timing)
-                        scrape_time = time.time() - scrape_start
-                        print(f"| OK | Time: {scrape_time:.2f}s")
-                        
-                        # Send completion log
-                        await _send_simple_log_to_cms(run_id, {
-                            "type": "SCRAPE",
-                            "url": item_url,
-                            "status": "✓",
-                            "timing": f"{scrape_time:.2f}s",
-                            "message": "Successfully processed metadata"
-                        })
-                        
-                        # [COMPLETE] step - R2 upload
-                        upload_start = time.time()
-                        print(f"[COMPLETE] {item_url}", end=" ", flush=True)
-                        
-                        # Send real-time log to CMS
-                        await _send_simple_log_to_cms(run_id, {
-                            "type": "COMPLETE",
-                            "url": item_url,
-                            "status": "⏳",
-                            "message": "Uploading media to R2 storage..."
-                        })
+                        # Process item (reduced logging overhead - single combined log per item)
+                        total_start = time.time()
+                        print(f"[PROCESS] {item_url}", end=" ", flush=True)
                         
                         r2_key = None
+                        base_key = None
                         if hasattr(item, 'media_url') and item.media_url:
                             # Generate organized R2 key based on source type
                             base_key = _generate_r2_key(url, item.external_id)
+                            upload_start = time.time()
                             if getattr(item, 'media_type', 'image') == 'image':
                                 r2_key = await storage.upload_image(item.media_url, base_key)
                             elif getattr(item, 'media_type', 'image') == 'video':
                                 # Try to pass a poster candidate so CMS can preview from R2
                                 poster_candidate = getattr(item, 'thumbnail_url', None) or getattr(item, 'og_image_url', None) or getattr(item, 'image_url', None)
                                 r2_key = await storage.upload_video(item.media_url, base_key, poster_candidate)
+                            upload_time = time.time() - upload_start
+                        else:
+                            upload_time = 0.0
                         
-                        upload_time = time.time() - upload_start
-                        print(f"| OK | Time: {upload_time:.2f}s")
-                        
-                        # Send completion log
-                        await _send_simple_log_to_cms(run_id, {
-                            "type": "COMPLETE",
-                            "url": item_url,
-                            "status": "✓",
-                            "timing": f"{upload_time:.2f}s",
-                            "message": f"Successfully uploaded to R2: {base_key if 'base_key' in locals() else 'N/A'}"
-                        })
-                        
-                        # [WRITE/UPLOAD] step - Database write
+                        # Database write
                         write_start = time.time()
-                        print(f"[WRITE/UPLOAD] {item_url}", end=" ", flush=True)
-                        
                         block_id = await _upsert_block(session, source_id, run_id, item, r2_key)
 
                         # Record provenance in block_sources (many-to-many) for strict feeds
@@ -1525,18 +1558,18 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                         write_time = time.time() - write_start
                         total_time = time.time() - total_start
                         upload_status = "OK" if r2_key else "NO_MEDIA"
-                        print(f"| {upload_status} | Time: {write_time:.2f}s | Total: {total_time:.2f}s")
+                        print(f"| {upload_status} | Upload: {upload_time:.2f}s | Write: {write_time:.2f}s | Total: {total_time:.2f}s")
                         progress_msg = f"{processed_count}/{max_items if max_items else 'unlimited'} completed"
                         print(f"SUCCESS {progress_msg}")
                         await log_complete(run_id, item_url, total_time, progress_msg)
                         
-                        # Send log directly to CMS for real-time display
-                        await _send_simple_log_to_cms(run_id, {
-                            "type": "WRITE/UPLOAD",
+                        # Send batched log (single entry per item with all stages combined)
+                        await batched_logger.add_log({
+                            "type": "COMPLETE",
                             "url": item_url,
                             "status": "✓",
-                            "timing": f"{write_time:.2f}s",
-                            "message": progress_msg
+                            "timing": f"{total_time:.2f}s",
+                            "message": f"Processed: upload={upload_time:.2f}s, write={write_time:.2f}s, {progress_msg}"
                         })
                         print("---")
                         
@@ -1616,6 +1649,10 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
             # Mark run as completed
             await update_run_status(session, run_id, RunStatusEnum.completed, counters)
             await session.commit()
+            
+            # Flush any remaining batched logs
+            if 'batched_logger' in locals():
+                await batched_logger.flush()
             
             # Send completion log to CMS
             await _send_simple_log_to_cms(run_id, {

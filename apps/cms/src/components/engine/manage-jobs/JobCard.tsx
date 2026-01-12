@@ -179,7 +179,11 @@ function parseBulkUrls(urlString: string): string[] {
 }
 
 // Enhanced URL list component with gradient/blur effect
-function CollapsibleUrlList({ urls }: { urls: string[] }) {
+const CollapsibleUrlList = React.memo(function CollapsibleUrlList({
+  urls,
+}: {
+  urls: string[];
+}) {
   const [isExpanded, setIsExpanded] = React.useState(false);
 
   if (urls.length <= 1) {
@@ -204,7 +208,7 @@ function CollapsibleUrlList({ urls }: { urls: string[] }) {
   return (
     <div className="space-y-0">
       {/* First URL - Always fully visible, single line height */}
-      <div className="flex items-center gap-2 min-h-[1.5rem]">
+      <div className="flex items-center gap-2 min-h-6">
         <a
           href={firstUrl}
           target="_blank"
@@ -255,9 +259,9 @@ function CollapsibleUrlList({ urls }: { urls: string[] }) {
       )}
     </div>
   );
-}
+});
 
-export function JobCard({
+export const JobCard = React.memo(function JobCard({
   job,
   onPause,
   onResume,
@@ -272,14 +276,17 @@ export function JobCard({
   isProcessing = false,
   isExpanded = false,
 }: JobCardProps) {
-  const sourceTypeLabel =
-    job.sourceType === "home"
-      ? "Home"
-      : job.sourceType === "pop"
-      ? "Pop"
-      : job.sourceType === "user"
-      ? "User"
-      : "Blocks";
+  const sourceTypeLabel = React.useMemo(
+    () =>
+      job.sourceType === "home"
+        ? "Home"
+        : job.sourceType === "pop"
+        ? "Pop"
+        : job.sourceType === "user"
+        ? "User"
+        : "Blocks",
+    [job.sourceType]
+  );
 
   // Get badge color classes based on source type
   const getBadgeColors = (sourceType: string) => {
@@ -304,40 +311,43 @@ export function JobCard({
   const [forceRunToggle, setForceRunToggle] = React.useState(false);
 
   // Parse URLs for all jobs (not just blocks)
-  const parsedUrls = parseBulkUrls(job.url);
+  const parsedUrls = React.useMemo(() => parseBulkUrls(job.url), [job.url]);
   const hasMultipleUrls = parsedUrls.length > 1;
 
-  const handleEditClick = () => {
+  const handleEditClick = React.useCallback(() => {
     if (onEdit) {
       onEdit(job.id);
     } else {
       setEditOpen(true);
     }
-  };
+  }, [job.id, onEdit]);
 
-  const handleDeleteClick = () => {
+  const handleDeleteClick = React.useCallback(() => {
     setDeleteOpen(true);
-  };
+  }, []);
 
-  const handleRunNow = async () => {
+  const handleRunNow = React.useCallback(() => {
     if (onRunNow) {
       onRunNow(job.id);
     }
-  };
+  }, [job.id, onRunNow]);
 
-  const handleForceRun = async () => {
+  const handleForceRun = React.useCallback(() => {
     if (onForceRun) {
       onForceRun(job.id);
     }
-  };
+  }, [job.id, onForceRun]);
 
-  const handleReconcile = async () => {
+  const handleReconcile = React.useCallback(() => {
     if (isStale && onReconcile && job.runId) {
       onReconcile(job.runId);
     }
-  };
+  }, [isStale, job.runId, onReconcile]);
 
-  const statusColor = getStatusDotColor(job.status);
+  const statusColor = React.useMemo(
+    () => getStatusDotColor(job.status),
+    [job.status]
+  );
   const isRunning = job.status === "running";
 
   return (
@@ -350,11 +360,11 @@ export function JobCard({
           isRunning && "ring-1 ring-emerald-500/20"
         )}
       >
-        <CardHeader className="px-6 py-4 bg-foreground/2.5">
+        <CardHeader className="px-6 py-4 bg-foreground/2.5 border-b border-border/50">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-start gap-3 min-w-0 flex-1">
               {/* Status circle - fixed position, won't shift */}
-              <div className="flex-shrink-0 pt-0.5">
+              <div className="shrink-0 pt-0.5">
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -562,7 +572,7 @@ export function JobCard({
         </CardContent>
         <CardFooter
           className={cn(
-            "px-6 pt-4 flex flex-wrap items-center justify-between gap-4 border-t border-border/50",
+            "px-6 pt-4 flex flex-wrap items-center justify-between gap-4 bg-foreground/2.5 border-t border-border/50",
             isExpanded ? "pb-0" : "pb-4"
           )}
         >
@@ -713,6 +723,7 @@ export function JobCard({
         onOpenChange={setDeleteOpen}
         jobId={job.id}
         jobUrl={job.url}
+        sourceType={job.sourceType}
         onSuccess={() => {
           setDeleteOpen(false);
           onUpdated?.();
@@ -720,4 +731,4 @@ export function JobCard({
       />
     </>
   );
-}
+});

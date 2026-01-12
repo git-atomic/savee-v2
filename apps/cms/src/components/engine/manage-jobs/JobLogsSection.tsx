@@ -23,7 +23,10 @@ interface JobLogsSectionProps {
   isOpen: boolean;
 }
 
-export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
+export const JobLogsSection = React.memo(function JobLogsSection({
+  runId,
+  isOpen,
+}: JobLogsSectionProps) {
   const [logs, setLogs] = React.useState<LogEntry[]>([]);
   const [autoFollow, setAutoFollow] = React.useState(true);
   const logsEndRef = React.useRef<HTMLDivElement>(null);
@@ -122,9 +125,10 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
     if (isOpen && runId) {
       fetchSnapshot(runId);
       attachStream(runId);
-      // Also poll periodically as a safety net and after run completes
+      // Also poll periodically as a safety net and after run completes.
+      // Keep this gentle (every 5s) to avoid excessive load.
       if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(() => fetchSnapshot(runId as string), 3000);
+      pollRef.current = setInterval(() => fetchSnapshot(runId as string), 5000);
     }
     return () => {
       if (pollRef.current) {
@@ -196,7 +200,7 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
 
   return (
     <div className="rounded-lg border bg-card">
-      <div className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 text-xs backdrop-blur supports-[backdrop-filter]:bg-background/75 rounded-t-lg">
+      <div className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 text-xs backdrop-blur supports-backdrop-filter:bg-background/75 rounded-t-lg">
         <div className="flex items-center justify-between">
           <span className="font-medium">Logs</span>
           <div className="flex items-center gap-3">
@@ -222,7 +226,7 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
           </div>
         </div>
       </div>
-      <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75 rounded-t-lg">
+      <div className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/75 rounded-t-lg">
         <div className="grid grid-cols-[160px_140px_1fr_120px_120px] items-center px-4 py-2.5 text-xs font-medium text-muted-foreground">
           <div>Time</div>
           <div>Stage</div>
@@ -329,4 +333,4 @@ export function JobLogsSection({ runId, isOpen }: JobLogsSectionProps) {
       </ScrollArea>
     </div>
   );
-}
+});

@@ -16,11 +16,11 @@ export default async function JobsPage() {
     <div className="flex flex-col h-full w-full overflow-y-auto">
       <div className="flex flex-col border-t border-border bg-background min-h-full">
         <div className="flex flex-col p-8 pb-8">
-          <div className="mb-10 shrink-0">
-            <h1 className="text-3xl font-bold tracking-tight">Manage Jobs</h1>
-            <p className="text-muted-foreground text-sm mt-2">
+          <div className="mb-6 shrink-0">
+            <h1 className="text-2xl font-bold tracking-tight">Manage Jobs</h1>
+            {/* <p className="text-muted-foreground text-sm mt-2">
               View and manage all scraping jobs
-            </p>
+            </p> */}
           </div>
           <div className="flex-1">
             <JobsList />

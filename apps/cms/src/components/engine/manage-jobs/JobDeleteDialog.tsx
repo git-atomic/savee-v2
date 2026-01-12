@@ -14,13 +14,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 
 interface JobDeleteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   jobId: string;
   jobUrl: string;
+  sourceType: "home" | "pop" | "user" | "blocks";
   onSuccess: () => void;
 }
 
@@ -29,43 +29,45 @@ export function JobDeleteDialog({
   onOpenChange,
   jobId,
   jobUrl,
+  sourceType,
   onSuccess,
 }: JobDeleteDialogProps) {
   const [confirmText, setConfirmText] = React.useState("");
   const [deleteFromDb, setDeleteFromDb] = React.useState(true);
   const [deleteFromR2, setDeleteFromR2] = React.useState(false);
   const [deleteUsers, setDeleteUsers] = React.useState(false);
+  const [deleteBlocks, setDeleteBlocks] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
 
   React.useEffect(() => {
     if (open) {
       setConfirmText("");
-      setDeleteFromDb(true);
-      setDeleteFromR2(false);
-      setDeleteUsers(false);
+      // For blocks type, check deleteBlocks, deleteFromR2, and deleteFromDb by default
+      if (sourceType === "blocks") {
+        setDeleteFromDb(true);
+        setDeleteFromR2(true);
+        setDeleteUsers(false);
+        setDeleteBlocks(true);
+      } else {
+        setDeleteFromDb(true);
+        setDeleteFromR2(false);
+        setDeleteUsers(false);
+        setDeleteBlocks(false);
+      }
     }
-  }, [open]);
+  }, [open, sourceType]);
 
-  const normalizeUrl = (url: string): string => {
-    try {
-      const u = new URL(url.startsWith("http") ? url : `https://${url}`);
-      return `${u.hostname}${u.pathname}`.replace(/\/+$/, "");
-    } catch {
-      return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  // Parse URLs for blocks type (comma-separated)
+  const parseJobUrls = React.useMemo(() => {
+    if (sourceType === "blocks") {
+      return jobUrl.split(",").map(u => u.trim()).filter(Boolean);
     }
-  };
+    return [jobUrl];
+  }, [jobUrl, sourceType]);
 
   const canDelete = React.useMemo(() => {
-    return normalizeUrl(confirmText) === normalizeUrl(jobUrl);
-  }, [confirmText, jobUrl]);
-
-  const confirmHost = React.useMemo(() => {
-    try {
-      return new URL(jobUrl).hostname;
-    } catch {
-      return jobUrl.replace(/^https?:\/\//, "").split("/")[0] || "this job";
-    }
-  }, [jobUrl]);
+    return confirmText.trim().toLowerCase() === "delete";
+  }, [confirmText]);
 
   const handleDelete = async () => {
     if (!canDelete) return;
@@ -79,6 +81,7 @@ export function JobDeleteDialog({
           deleteFromDb,
           deleteFromR2,
           deleteUsers,
+          deleteBlocks,
         }),
       });
 
@@ -107,59 +110,72 @@ export function JobDeleteDialog({
         <DialogHeader>
           <DialogTitle className="text-destructive">Delete Job</DialogTitle>
           <DialogDescription>
-            This will permanently delete the job and related resources like database records,
-            storage files, and user data.
+            This action cannot be undone
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-5">
           <div className="space-y-2">
             <Label htmlFor="confirm-url" className="text-sm font-medium">
-              To confirm, type "{jobUrl}"
+              Type "delete" to confirm
             </Label>
             <Input
               id="confirm-url"
-              placeholder={jobUrl}
+              placeholder="delete"
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
               className="font-mono text-xs"
             />
           </div>
-          <div className="space-y-3">
-            <div className="flex items-center space-x-2">
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-2.5">
               <Checkbox
                 id="delete-db"
                 checked={deleteFromDb}
                 onCheckedChange={(checked) => setDeleteFromDb(checked === true)}
               />
-              <Label htmlFor="delete-db" className="text-sm">
-                Delete from Database
+              <Label htmlFor="delete-db" className="text-sm cursor-pointer">
+                Database
               </Label>
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center gap-2.5">
               <Checkbox
                 id="delete-r2"
                 checked={deleteFromR2}
                 onCheckedChange={(checked) => setDeleteFromR2(checked === true)}
               />
-              <Label htmlFor="delete-r2" className="text-sm">
-                Delete from R2 Storage
+              <Label htmlFor="delete-r2" className="text-sm cursor-pointer">
+                R2 Storage
               </Label>
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center gap-2.5">
               <Checkbox
                 id="delete-users"
                 checked={deleteUsers}
                 onCheckedChange={(checked) => setDeleteUsers(checked === true)}
               />
-              <Label htmlFor="delete-users" className="text-sm">
-                Delete related Users
+              <Label htmlFor="delete-users" className="text-sm cursor-pointer">
+                Related Users
               </Label>
             </div>
+            {sourceType === "blocks" && (
+              <div className="flex items-start gap-2.5">
+                <Checkbox
+                  id="delete-blocks"
+                  checked={deleteBlocks}
+                  onCheckedChange={(checked) => setDeleteBlocks(checked === true)}
+                  className="mt-0.5"
+                />
+                <div className="flex-1">
+                  <Label htmlFor="delete-blocks" className="text-sm cursor-pointer">
+                    All Blocks ({parseJobUrls.length} URL{parseJobUrls.length !== 1 ? 's' : ''})
+                  </Label>
+                </div>
+              </div>
+            )}
           </div>
           {!canDelete && confirmText && (
-            <div className="flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-              <span className="text-lg">!</span>
-              <span>Deleting {confirmHost} cannot be undone.</span>
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
+              Type "delete" to enable deletion
             </div>
           )}
         </div>
@@ -172,7 +188,7 @@ export function JobDeleteDialog({
             onClick={handleDelete}
             disabled={!canDelete || isDeleting}
           >
-            {isDeleting ? "Deleting..." : "Delete Job"}
+            {isDeleting ? "Deleting..." : "Delete"}
           </Button>
         </DialogFooter>
       </DialogContent>

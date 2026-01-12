@@ -584,6 +584,7 @@ export function JobRow({
         onOpenChange={setDeleteOpen}
         jobId={job.id}
         jobUrl={job.url}
+        sourceType={job.sourceType}
         onSuccess={() => {
           setDeleteOpen(false);
           onUpdated?.();
