@@ -159,6 +159,7 @@ export interface UsersResponse {
 export async function fetchUsers(
   cursor?: string | null,
   limit: number = 50,
+  q?: string | null,
   signal?: AbortSignal
 ): Promise<UsersResponse> {
   const params = new URLSearchParams({
@@ -167,6 +168,10 @@ export async function fetchUsers(
 
   if (cursor) {
     params.set("cursor", cursor);
+  }
+
+  if (q && q.trim().length > 0) {
+    params.set("q", q.trim());
   }
 
   try {
@@ -182,6 +187,40 @@ export async function fetchUsers(
     }
 
     const data = (await response.json()) as UsersResponse;
+    return data;
+  } catch (error) {
+    throw error;
+  }
+}
+
+export async function searchBlocks(
+  q: string,
+  cursor?: string | null,
+  limit: number = 50,
+  signal?: AbortSignal
+): Promise<BlocksResponse> {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+    q: q.trim(),
+  });
+
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+
+  try {
+    const response = await fetch(`/api/blocks?${params.toString()}`, {
+      signal,
+      headers: {
+        "Cache-Control": "no-cache",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to search blocks: ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as BlocksResponse;
     return data;
   } catch (error) {
     throw error;

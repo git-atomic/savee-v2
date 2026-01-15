@@ -13,15 +13,18 @@ import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { useLayoutSettings } from "./LayoutSettingsContext";
 import { Settings } from "lucide-react";
+import { SearchPopover, type SearchPopoverRef } from "./SearchPopover";
 
 export function Navigation() {
   const pathname = usePathname();
   const { columns, gap, setColumns, setGap } = useLayoutSettings();
   // Always start with true to match server render, then update after hydration
   const [isVisible, setIsVisible] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const rafRef = useRef<number | null>(null);
   const lastScrollY = useRef(0);
   const scrollThreshold = 10; // Minimum scroll distance to trigger hide/show
+  const searchPopoverRef = useRef<SearchPopoverRef>(null);
 
   const navItems = [
     { href: "/", label: "Home" },
@@ -55,9 +58,11 @@ export function Navigation() {
 
         // Only update if scroll position changed significantly
         if (Math.abs(scrollDelta) > 5) {
-          // Scrolling down: hide nav
+          // Scrolling down: hide nav and close popovers
           if (scrollDelta > 0) {
             setIsVisible(false);
+            setSettingsOpen(false);
+            searchPopoverRef.current?.close();
           }
           // Scrolling up: show nav
           else if (scrollDelta < 0) {
@@ -142,8 +147,13 @@ export function Navigation() {
               })}
             </ul>
 
+            {/* Search in the middle */}
+            <div className="absolute left-1/2 -translate-x-1/2 w-full max-w-2xl px-4">
+              <SearchPopover ref={searchPopoverRef} />
+            </div>
+
             {/* Settings button */}
-            <Popover>
+            <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
               <PopoverTrigger asChild>
                 <Button
                   variant="ghost"
@@ -158,7 +168,7 @@ export function Navigation() {
                 align="end" 
                 side="bottom"
                 sideOffset={8}
-                className="w-80 z-[101]"
+                className="w-80"
                 style={{ zIndex: 101 }}
               >
                 <div className="space-y-6">
