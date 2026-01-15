@@ -4,15 +4,14 @@ import { useMemo } from "react";
 import type { Block } from "@/types/block";
 import { useBlockAspectRatios } from "@/hooks/use-block-aspect-ratios";
 import { getDeterministicAspectRatio } from "@/lib/masonry-utils";
+import { useLayoutSettings } from "./LayoutSettingsContext";
 
 interface MasonrySkeletonProps {
   columns: number;
   count: number;
   blocks?: Block[]; // Blocks to match aspect ratios - MUST match the exact blocks that will render
+  containerWidth?: number; // Optional container width for accurate column width calculation
 }
-
-// Consistent gap size - must match MasonryGrid
-const GAP_SIZE = 32; // 32px gap for improved spacing
 
 interface SkeletonItem {
   id: string;
@@ -30,7 +29,7 @@ function SkeletonCard({ aspectRatio }: { aspectRatio: number }) {
         containIntrinsicSize: `auto ${(1 / aspectRatio) * 100}%`,
       }}
     >
-      <div 
+      <div
         className="w-full h-full rounded-[4px] overflow-hidden relative bg-muted/50"
         style={{
           willChange: "opacity", // Optimize for fade-in
@@ -53,9 +52,20 @@ export function MasonrySkeleton({
   columns,
   count,
   blocks,
+  containerWidth,
 }: MasonrySkeletonProps) {
+  // Get gap from context to match MasonryGrid
+  const { gap } = useLayoutSettings();
+  
   // Get aspect ratios from blocks if provided - this will update reactively
   const blockAspectRatios = useBlockAspectRatios(blocks || []);
+
+  // Calculate column width if containerWidth is provided (to match MasonryGrid behavior)
+  const columnWidth = useMemo(() => {
+    if (!containerWidth || containerWidth === 0 || columns === 0) return undefined;
+    const totalGapSpace = gap * (columns - 1);
+    return (containerWidth - totalGapSpace) / columns;
+  }, [containerWidth, columns, gap]);
 
   // Create skeleton items that EXACTLY match the block distribution
   // This ensures skeletons align perfectly with actual content
@@ -110,8 +120,11 @@ export function MasonrySkeleton({
     <div
       className="grid w-full"
       style={{
-        gridTemplateColumns: `repeat(${columns}, 1fr)`,
-        gap: `${GAP_SIZE}px`,
+        // Use fixed column widths if available, otherwise use 1fr
+        gridTemplateColumns: columnWidth
+          ? `repeat(${columns}, ${columnWidth}px)`
+          : `repeat(${columns}, 1fr)`,
+        gap: `${gap}px`,
         // Prevent layout shifts during skeleton loading
         minHeight: "100vh",
         containIntrinsicSize: "auto 2000px",
@@ -121,7 +134,7 @@ export function MasonrySkeleton({
         <div
           key={colIndex}
           className="flex flex-col"
-          style={{ gap: `${GAP_SIZE}px` }}
+          style={{ gap: `${gap}px` }}
         >
           {colItems.map((item) => (
             <SkeletonCard key={item.id} aspectRatio={item.aspectRatio} />

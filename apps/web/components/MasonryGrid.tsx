@@ -8,6 +8,7 @@ import { useMasonryColumns } from "@/hooks/use-masonry-columns";
 import { useBlockAspectRatios } from "@/hooks/use-block-aspect-ratios";
 import { createMasonryDistributor } from "@/lib/masonry-distribution";
 import { useIntersectionObserverPool } from "@/hooks/use-intersection-observer-pool";
+import { useLayoutSettings } from "./LayoutSettingsContext";
 
 interface MasonryGridProps {
   blocks: Block[];
@@ -16,9 +17,6 @@ interface MasonryGridProps {
   isLoadingMore?: boolean;
   columns?: number;
 }
-
-// Consistent gap size across all components
-const GAP_SIZE = 32; // 32px gap for improved spacing
 
 export function MasonryGrid({
   blocks,
@@ -32,6 +30,9 @@ export function MasonryGrid({
   const isLoadingRef = useRef(false);
   const [containerWidth, setContainerWidth] = useState(0);
   const rafRef = useRef<number | null>(null);
+
+  // Get gap from context
+  const { gap } = useLayoutSettings();
 
   // Use prop columns or internal hook
   const internalColumns = useMasonryColumns();
@@ -83,11 +84,19 @@ export function MasonryGrid({
     };
   }, []);
 
+  // Calculate column width accounting for gaps to keep total width constant
+  // Formula: columnWidth = (containerWidth - gap * (columns - 1)) / columns
+  // This ensures the total width stays constant when gap changes
+  const columnWidth = useMemo(() => {
+    if (containerWidth === 0 || columns === 0) return 0;
+    const totalGapSpace = gap * (columns - 1);
+    return (containerWidth - totalGapSpace) / columns;
+  }, [containerWidth, columns, gap]);
+
   // Create distributor with memoization
   const distributor = useMemo(() => {
-    const columnWidth = containerWidth > 0 ? containerWidth / columns : 0;
-    return createMasonryDistributor(columnWidth, GAP_SIZE);
-  }, [containerWidth, columns]);
+    return createMasonryDistributor(columnWidth, gap);
+  }, [columnWidth, gap]);
 
   // Distribute blocks to columns using height-balanced algorithm
   const columnDistribution = useMemo(() => {
@@ -144,8 +153,8 @@ export function MasonryGrid({
   const priorityCount = Math.min(columns * 2, blocks.length);
 
   return (
-    <div 
-      ref={containerRef} 
+    <div
+      ref={containerRef}
       className="w-full"
       style={{
         containIntrinsicSize: "auto 1000px", // Hint for better layout stability
@@ -154,8 +163,9 @@ export function MasonryGrid({
       <div
         className="grid"
         style={{
-          gridTemplateColumns: `repeat(${columns}, 1fr)`,
-          gap: `${GAP_SIZE}px`,
+          // Use fixed column widths instead of 1fr to prevent width expansion when gap changes
+          gridTemplateColumns: `repeat(${columns}, ${columnWidth}px)`,
+          gap: `${gap}px`,
           willChange: "contents", // Optimize for layout changes
         }}
       >
@@ -163,7 +173,7 @@ export function MasonryGrid({
           <div
             key={`col-${colIndex}`}
             className="flex flex-col"
-            style={{ gap: `${GAP_SIZE}px` }}
+            style={{ gap: `${gap}px` }}
           >
             {colBlocks.map((block, blockIndex) => {
               // Calculate global index for priority determination
@@ -189,8 +199,8 @@ export function MasonryGrid({
         <div
           ref={loadMoreRef}
           className="w-full"
-          style={{ 
-            marginTop: `${GAP_SIZE}px`,
+          style={{
+            marginTop: `${gap}px`,
             minHeight: "200px", // Reserve space to prevent layout shift
           }}
         >

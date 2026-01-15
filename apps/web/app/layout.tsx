@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
 import { Navigation } from "@/components/Navigation";
+import { LayoutSettingsProvider } from "@/components/LayoutSettingsContext";
 
 const inter = localFont({
   src: [
@@ -75,8 +76,10 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background`}
       >
-        <Navigation />
-        {children}
+        <LayoutSettingsProvider>
+          <Navigation />
+          {children}
+        </LayoutSettingsProvider>
       </body>
     </html>
   );

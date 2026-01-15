@@ -4,15 +4,21 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useEffect, useState, useRef } from "react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Slider } from "@/components/ui/slider";
+import { Button } from "@/components/ui/button";
+import { useLayoutSettings } from "./LayoutSettingsContext";
+import { Settings } from "lucide-react";
 
 export function Navigation() {
   const pathname = usePathname();
-  const [isVisible, setIsVisible] = useState(() => {
-    if (typeof window !== "undefined") {
-      return window.scrollY < 10;
-    }
-    return true;
-  });
+  const { columns, gap, setColumns, setGap } = useLayoutSettings();
+  // Always start with true to match server render, then update after hydration
+  const [isVisible, setIsVisible] = useState(true);
   const rafRef = useRef<number | null>(null);
   const lastScrollY = useRef(0);
   const scrollThreshold = 10; // Minimum scroll distance to trigger hide/show
@@ -24,6 +30,12 @@ export function Navigation() {
   ];
 
   useEffect(() => {
+    // Set initial scroll position and visibility after hydration
+    lastScrollY.current = window.scrollY;
+    setTimeout(() => {
+      setIsVisible(window.scrollY < scrollThreshold);
+    }, 0);
+
     // Throttle scroll handler using requestAnimationFrame for smooth performance
     const handleScroll = () => {
       if (rafRef.current) {
@@ -57,10 +69,6 @@ export function Navigation() {
       });
     };
 
-    // Check initial scroll position
-    lastScrollY.current = window.scrollY;
-    // Initial visibility is set via useState initializer, no need to set here
-
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       window.removeEventListener("scroll", handleScroll);
@@ -68,7 +76,7 @@ export function Navigation() {
         cancelAnimationFrame(rafRef.current);
       }
     };
-  }, []);
+  }, [scrollThreshold]);
 
   return (
     <>
@@ -82,11 +90,12 @@ export function Navigation() {
           zIndex: "var(--z-index-nav)",
           transform: isVisible ? "translateY(0)" : "translateY(-100%)",
           willChange: "transform",
+          overflow: "visible", // Ensure popover isn't clipped
         }}
       >
         <div
           className="relative flex items-center"
-          style={{ height: "var(--nav-height)" }}
+          style={{ height: "var(--nav-height)", overflow: "visible" }}
         >
           {/* Solid background - always opaque */}
           <div
@@ -98,10 +107,11 @@ export function Navigation() {
 
           {/* Navigation content */}
           <div
-            className="relative flex items-center w-full"
+            className="relative flex items-center justify-between w-full"
             style={{
               paddingLeft: "var(--page-margin)",
               paddingRight: "var(--page-margin)",
+              overflow: "visible",
             }}
           >
             <ul className="flex shrink-0 items-center gap-x-6 md:gap-x-4">
@@ -131,6 +141,60 @@ export function Navigation() {
                 );
               })}
             </ul>
+
+            {/* Settings button */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  aria-label="Layout settings"
+                >
+                  <Settings className="size-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent 
+                align="end" 
+                side="bottom"
+                sideOffset={8}
+                className="w-80 z-[101]"
+                style={{ zIndex: 101 }}
+              >
+                <div className="space-y-6">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-sm font-medium">Columns</label>
+                      <span className="text-sm text-muted-foreground">
+                        {columns}
+                      </span>
+                    </div>
+                    <Slider
+                      value={[columns]}
+                      onValueChange={(value) => setColumns(value[0])}
+                      min={1}
+                      max={10}
+                      step={1}
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-sm font-medium">Padding</label>
+                      <span className="text-sm text-muted-foreground">
+                        {gap}px
+                      </span>
+                    </div>
+                    <Slider
+                      value={[gap]}
+                      onValueChange={(value) => setGap(value[0])}
+                      min={0}
+                      max={64}
+                      step={4}
+                    />
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
         </div>
       </nav>

@@ -68,6 +68,7 @@ function BlockCardComponent({
   const [isHovered, setIsHovered] = useState(false);
   const [isVideoLoaded, setIsVideoLoaded] = useState(wasPreviouslyLoaded);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [hasVideoPlayed, setHasVideoPlayed] = useState(false);
   const [localAspectRatio, setLocalAspectRatio] = useState<number | null>(
     propAspectRatio ?? null
   );
@@ -369,6 +370,13 @@ function BlockCardComponent({
 
           const playVideo = async () => {
             try {
+              // Ensure position is set before playing
+              if (videoPositionRef.current > 0 && video.duration > 0) {
+                video.currentTime = Math.min(
+                  videoPositionRef.current,
+                  video.duration - 0.1
+                );
+              }
               await video.play();
             } catch (err) {
               // Autoplay prevented - this is expected in some browsers
@@ -407,9 +415,22 @@ function BlockCardComponent({
         clearTimeout(loopTimeoutRef.current);
         loopTimeoutRef.current = null;
       }
-      if (video && !video.paused) {
-        videoPositionRef.current = video.currentTime;
-        video.pause();
+      if (video) {
+        // Always save the current position when unhovering, whether playing or paused
+        if (!video.paused) {
+          videoPositionRef.current = video.currentTime;
+          video.pause();
+        } else if (video.currentTime > 0) {
+          // Save position even if already paused (in case it changed)
+          videoPositionRef.current = video.currentTime;
+        }
+        // Ensure video stays at current position and doesn't reset
+        if (videoPositionRef.current > 0 && video.duration > 0) {
+          video.currentTime = Math.min(
+            videoPositionRef.current,
+            video.duration - 0.1
+          );
+        }
       }
     }
 
@@ -531,6 +552,7 @@ function BlockCardComponent({
           loadedBlocksCache.add(block.id);
         }
         setIsVideoPlaying(true);
+        setHasVideoPlayed(true); // Mark that video has played at least once
       },
       onEnded: () => {
         // Wait a bit before looping to prevent merge effect
@@ -628,7 +650,7 @@ function BlockCardComponent({
 
             {isVideo && videoUrl ? (
               <>
-                {/* Thumbnail image always visible when video is not actively playing */}
+                {/* Thumbnail image only visible before video has played */}
                 {imageSrc && (
                   <img
                     ref={imgRef}
@@ -641,16 +663,16 @@ function BlockCardComponent({
                     onLoad={handleImageLoad}
                     onError={handleImageError}
                     style={{
-                      opacity: isVideoPlaying ? 0 : 1,
+                      opacity: hasVideoPlayed ? 0 : 1,
                       transition: wasPreviouslyLoaded
                         ? "none"
                         : "opacity 0.25s ease-out",
                     }}
-                    aria-hidden={isVideoPlaying}
+                    aria-hidden={hasVideoPlayed}
                   />
                 )}
 
-                {/* Video overlays the thumbnail and only becomes visible when playing */}
+                {/* Video stays visible once it has played, showing paused frame */}
                 <video
                   ref={videoRef}
                   src={videoUrl}
@@ -668,7 +690,7 @@ function BlockCardComponent({
                   onEnded={videoEventHandlers.onEnded}
                   onProgress={videoEventHandlers.onProgress}
                   style={{
-                    opacity: isVideoPlaying ? 1 : 0,
+                    opacity: hasVideoPlayed || isVideoPlaying ? 1 : 0,
                     transition: wasPreviouslyLoaded
                       ? "none"
                       : "opacity 0.25s ease-out",
@@ -677,10 +699,10 @@ function BlockCardComponent({
                   aria-label={block.title || "Video content"}
                 />
 
-                {/* Video badge */}
+                {/* Video badge - only show before video has played */}
                 <div
                   className={`pointer-events-none absolute bottom-2 left-2 z-20 flex items-center gap-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-white backdrop-blur-sm transition-opacity duration-200 ${
-                    isVideoPlaying ? "opacity-0" : "opacity-100"
+                    hasVideoPlayed ? "opacity-0" : "opacity-100"
                   }`}
                   aria-label="Video content"
                 >

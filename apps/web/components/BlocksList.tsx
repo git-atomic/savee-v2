@@ -15,7 +15,9 @@ interface BlocksListProps {
   origin?: string | null;
 }
 
-export function BlocksList({ origin }: BlocksListProps = {} as BlocksListProps) {
+export function BlocksList(
+  { origin }: BlocksListProps = {} as BlocksListProps
+) {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
@@ -144,7 +146,7 @@ export function BlocksList({ origin }: BlocksListProps = {} as BlocksListProps) 
 
   return (
     <ErrorBoundary>
-      <div 
+      <div
         className="min-h-screen"
         style={{
           paddingTop: "var(--page-margin)",
@@ -156,7 +158,11 @@ export function BlocksList({ origin }: BlocksListProps = {} as BlocksListProps) 
         }}
       >
         {isLoading ? (
-          <MasonrySkeleton columns={columns} count={columns * 6} blocks={undefined} />
+          <MasonrySkeleton
+            columns={columns}
+            count={columns * 6}
+            blocks={undefined}
+          />
         ) : blocks.length > 0 ? (
           <MasonryGrid
             blocks={blocks}
