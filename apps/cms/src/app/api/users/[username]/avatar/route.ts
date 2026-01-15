@@ -48,11 +48,13 @@ export async function GET(
     });
     const doc = found.docs?.[0];
 
-    // If we already have R2 key, return proxy URL
+    // If we already have R2 key, return proxy URL for admin (ensures previews even if R2 CORS is strict)
     const existingKey = doc?.avatar_r2_key || (doc as any)?.avatarR2Key;
     if (existingKey) {
       return NextResponse.json({
-        src: `/api/r2/presign?mode=proxy&key=${encodeURIComponent(existingKey)}`,
+        src: `/api/r2/presign?mode=proxy&key=${encodeURIComponent(
+          existingKey
+        )}`,
       });
     }
 

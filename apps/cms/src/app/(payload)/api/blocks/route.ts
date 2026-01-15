@@ -50,10 +50,17 @@ export async function GET(req: NextRequest) {
     }
     if (q && q.trim().length > 1) {
       const like = `%${q.trim()}%`;
+      const searchParamIndex = params.length + 1;
       blockWhere.push(
-        `(b.title ILIKE $${params.length + 1} OR b.og_title ILIKE $${
-          params.length + 1
-        } OR b.og_description ILIKE $${params.length + 1})`
+        `(b.title ILIKE $${searchParamIndex} OR b.og_title ILIKE $${searchParamIndex} OR b.og_description ILIKE $${searchParamIndex} OR b.description ILIKE $${searchParamIndex} OR b.color_hexes::text ILIKE $${searchParamIndex} OR b.ai_tags::text ILIKE $${searchParamIndex} OR EXISTS (
+          SELECT 1 FROM block_sources bs_search
+          JOIN sources s_search ON s_search.id = bs_search.source_id
+          WHERE bs_search.block_id = b.id AND s_search.username ILIKE $${searchParamIndex}
+        ) OR EXISTS (
+          SELECT 1 FROM user_blocks ub_search
+          JOIN savee_users u_search ON u_search.id = ub_search.user_id
+          WHERE ub_search.block_id = b.id AND u_search.username ILIKE $${searchParamIndex}
+        ))`
       );
       params.push(like);
     }
@@ -166,7 +173,20 @@ export async function GET(req: NextRequest) {
         ) AS origin_map
       FROM blocks b
       ${whereSQL}
-      ORDER BY b.saved_at DESC NULLS LAST, b.created_at DESC NULLS LAST
+      ORDER BY ${
+        origin === "pop"
+          ? `(
+              SELECT COUNT(DISTINCT uname)::int
+              FROM (
+                SELECT s2b.username AS uname
+                FROM block_sources bs2b JOIN sources s2b ON s2b.id = bs2b.source_id
+                WHERE bs2b.block_id = b.id AND s2b.source_type::text = 'user' AND s2b.username IS NOT NULL
+                UNION
+                SELECT u.username AS uname FROM user_blocks ub JOIN savee_users u ON u.id = ub.user_id WHERE ub.block_id = b.id
+              ) users_union
+            ) DESC NULLS LAST, `
+          : ""
+      }b.saved_at DESC NULLS LAST, b.created_at DESC NULLS LAST
       LIMIT $${params.length + 1}
     `;
     params.push(limit);

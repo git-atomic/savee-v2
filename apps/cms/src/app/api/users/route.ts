@@ -20,39 +20,78 @@ export async function GET(req: NextRequest) {
       200
     );
     const q = url.searchParams.get("q") || undefined;
-    const cursor = url.searchParams.get("cursor") || undefined; // base64 { savesCount:number, id:number }
+    const cursor = url.searchParams.get("cursor") || undefined; // base64 { blockCount:number, id:number }
 
     const where: string[] = [];
     const params: any[] = [];
     if (q && q.trim().length > 1) {
       const like = `%${q.trim()}%`;
       where.push(
-        `(su.username ILIKE $${params.length + 1} OR su.display_name ILIKE $${params.length + 1})`
+        `(su.username ILIKE $${params.length + 1} OR su.display_name ILIKE $${
+          params.length + 1
+        })`
       );
       params.push(like);
     }
     if (cursor) {
       try {
         const c = JSON.parse(Buffer.from(cursor, "base64").toString("utf-8"));
-        if (c && typeof c.savesCount === "number" && typeof c.id === "number") {
-          params.push(Number(c.savesCount));
+        if (c && typeof c.blockCount === "number" && typeof c.id === "number") {
+          params.push(Number(c.blockCount));
           params.push(Number(c.id));
           where.push(
-            `(su.saves_count < $${params.length - 1} OR (su.saves_count = $${params.length - 1} AND su.id < $${params.length}))`
+            `((SELECT COUNT(*)::int FROM user_blocks ub WHERE ub.user_id = su.id) < $${
+              params.length - 1
+            } OR ((SELECT COUNT(*)::int FROM user_blocks ub WHERE ub.user_id = su.id) = $${
+              params.length - 1
+            } AND su.id < $${params.length}))`
           );
         }
       } catch {}
     }
     const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const sql = `
-      SELECT su.id, su.username, su.display_name, su.avatar_r2_key, su.profile_image_url, su.saves_count
+      SELECT 
+        su.id, 
+        su.username, 
+        su.display_name, 
+        su.avatar_r2_key, 
+        su.profile_image_url, 
+        su.profile_url,
+        su.bio,
+        su.location,
+        su.website_url,
+        su.follower_count,
+        su.following_count,
+        su.saves_count,
+        su.collections_count,
+        su.is_verified,
+        su.is_active,
+        COALESCE((
+          SELECT COUNT(*)::int 
+          FROM user_blocks ub 
+          WHERE ub.user_id = su.id
+        ), 0) AS block_count
       FROM savee_users su
       ${whereSQL}
-      ORDER BY su.saves_count DESC NULLS LAST, su.id DESC
+      ORDER BY block_count DESC NULLS LAST, su.saves_count DESC NULLS LAST, su.id DESC
       LIMIT $${params.length + 1}
     `;
     params.push(limit);
     const res = await db.query(sql, params);
+
+    // Get total count (only on first page, when no cursor)
+    let totalCount: number | null = null;
+    if (!cursor) {
+      const countSql = `
+        SELECT COUNT(*)::int AS c
+        FROM savee_users su
+        ${whereSQL}
+      `;
+      const countParams = params.slice(0, -1); // Remove limit param
+      const countRes = await db.query(countSql, countParams);
+      totalCount = countRes.rows[0]?.c ?? null;
+    }
 
     let nextCursor: string | null = null;
     if (res.rows.length === limit) {
@@ -60,13 +99,18 @@ export async function GET(req: NextRequest) {
       if (last) {
         try {
           nextCursor = Buffer.from(
-            JSON.stringify({ savesCount: last.saves_count || 0, id: last.id })
+            JSON.stringify({ blockCount: last.block_count || 0, id: last.id })
           ).toString("base64");
         } catch {}
       }
     }
 
-    return NextResponse.json({ success: true, users: res.rows, nextCursor });
+    return NextResponse.json({
+      success: true,
+      users: res.rows,
+      nextCursor,
+      total: totalCount,
+    });
   } catch (e) {
     return NextResponse.json(
       { success: false, error: String(e) },
@@ -74,5 +118,3 @@ export async function GET(req: NextRequest) {
     );
   }
 }
-
-

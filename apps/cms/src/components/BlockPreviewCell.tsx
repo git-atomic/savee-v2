@@ -54,17 +54,27 @@ export default function BlockPreviewCell({ rowData }: Props) {
           if (m) {
             const posterKey = `${m[1]}/poster_${m[2]}.jpg`;
             try {
-              // Prefer proxy mode to keep visualcms.vercel.app origin
-              const fallback = rowData?.thumbnail_url || rowData?.og_image_url || rowData?.image_url || "";
-              const proxied = `/api/r2/presign?mode=proxy&key=${encodeURIComponent(posterKey)}${fallback ? `&fallback=${encodeURIComponent(fallback)}` : ''}`;
-              const res = await fetch(proxied, { method: 'GET' });
+              // Prefer proxy mode to keep admin previews working even if R2 CORS is strict
+              const fallback =
+                rowData?.thumbnail_url ||
+                rowData?.og_image_url ||
+                rowData?.image_url ||
+                "";
+              const proxied = `/api/r2/presign?mode=proxy&key=${encodeURIComponent(
+                posterKey
+              )}${fallback ? `&fallback=${encodeURIComponent(fallback)}` : ""}`;
+              const res = await fetch(proxied, { method: "GET" });
               if (res.ok) {
                 setSrc(proxied);
                 setLoading(false);
                 return;
               }
               // Fallback to JSON presign
-              const resJson = await fetch(`/api/r2/presign?mode=json&key=${encodeURIComponent(posterKey)}`);
+              const resJson = await fetch(
+                `/api/r2/presign?mode=json&key=${encodeURIComponent(
+                  posterKey
+                )}`
+              );
               const data = await resJson.json().catch(() => null);
               if (data?.success && data?.url) {
                 setSrc(data.url);
@@ -87,18 +97,29 @@ export default function BlockPreviewCell({ rowData }: Props) {
         try {
           const imgKey = deriveImageVariantKey(r2Key);
           const cleanKey = imgKey.replace(/\/+/g, "/");
-          const fallbackImg = rowData?.thumbnail_url || rowData?.image_url || rowData?.og_image_url || "";
-          const proxied = `/api/r2/presign?mode=proxy&key=${encodeURIComponent(cleanKey)}${fallbackImg ? `&fallback=${encodeURIComponent(fallbackImg)}` : ''}`;
-          // Try proxy first (keeps our domain)
-          const resProxy = await fetch(proxied, { method: 'GET' });
+          const fallbackImg =
+            rowData?.thumbnail_url ||
+            rowData?.image_url ||
+            rowData?.og_image_url ||
+            "";
+          const proxied = `/api/r2/presign?mode=proxy&key=${encodeURIComponent(
+            cleanKey
+          )}${fallbackImg ? `&fallback=${encodeURIComponent(fallbackImg)}` : ""}`;
+          // Try proxy first (keeps admin previews robust)
+          const resProxy = await fetch(proxied, { method: "GET" });
           if (resProxy.ok) {
             setSrc(proxied);
             setLoading(false);
             return;
           }
           // Fallback to JSON presign
-          const presignUrl = `/api/r2/presign?mode=json&key=${encodeURIComponent(cleanKey)}`;
-          const res = await fetch(presignUrl, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
+          const presignUrl = `/api/r2/presign?mode=json&key=${encodeURIComponent(
+            cleanKey
+          )}`;
+          const res = await fetch(presignUrl, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          });
           if (res.ok) {
             const data = await res.json();
             if (!cancelled && data?.success && data?.url) {
