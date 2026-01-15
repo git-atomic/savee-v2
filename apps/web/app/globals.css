@@ -164,6 +164,25 @@
   body {
     font-display: swap;
   }
+  
+  /* Hide scrollbar but keep functionality */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* Custom duration for color picker transitions */
+  .duration-over-long {
+    transition-duration: 300ms;
+  }
+  
+  /* Border separator for color swatches */
+  .border-separator {
+    border-color: rgba(255, 255, 255, 0.1);
+  }
 }
 
 /* Subtle shimmer for the VIDEO badge while the video asset

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, memo, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, memo, useEffect, useCallback, useMemo, startTransition } from "react";
 import type { Block } from "@/types/block";
 import { getBlockMediaUrl, getBlockVideoUrl } from "@/lib/api";
 import { getDeterministicAspectRatio } from "@/lib/masonry-utils";
@@ -420,9 +420,18 @@ function BlockCardComponent({
         if (!video.paused) {
           videoPositionRef.current = video.currentTime;
           video.pause();
+          // Mark that video has been played so we show paused frame instead of thumbnail
+          if (video.currentTime > 0) {
+            startTransition(() => {
+              setHasVideoPlayed(true);
+            });
+          }
         } else if (video.currentTime > 0) {
           // Save position even if already paused (in case it changed)
           videoPositionRef.current = video.currentTime;
+          startTransition(() => {
+            setHasVideoPlayed(true);
+          });
         }
         // Ensure video stays at current position and doesn't reset
         if (videoPositionRef.current > 0 && video.duration > 0) {
@@ -552,7 +561,10 @@ function BlockCardComponent({
           loadedBlocksCache.add(block.id);
         }
         setIsVideoPlaying(true);
-        setHasVideoPlayed(true); // Mark that video has played at least once
+        // Mark that video has been played
+        if (video && video.currentTime > 0) {
+          setHasVideoPlayed(true);
+        }
       },
       onEnded: () => {
         // Wait a bit before looping to prevent merge effect
@@ -650,7 +662,7 @@ function BlockCardComponent({
 
             {isVideo && videoUrl ? (
               <>
-                {/* Thumbnail image only visible before video has played */}
+                {/* Thumbnail image only visible when video hasn't been played yet */}
                 {imageSrc && (
                   <img
                     ref={imgRef}
@@ -672,7 +684,7 @@ function BlockCardComponent({
                   />
                 )}
 
-                {/* Video stays visible once it has played, showing paused frame */}
+                {/* Video stays visible when hovered, playing, or has been played (showing paused frame) */}
                 <video
                   ref={videoRef}
                   src={videoUrl}
@@ -690,7 +702,7 @@ function BlockCardComponent({
                   onEnded={videoEventHandlers.onEnded}
                   onProgress={videoEventHandlers.onProgress}
                   style={{
-                    opacity: hasVideoPlayed || isVideoPlaying ? 1 : 0,
+                    opacity: isHovered || isVideoPlaying || hasVideoPlayed ? 1 : 0,
                     transition: wasPreviouslyLoaded
                       ? "none"
                       : "opacity 0.25s ease-out",
@@ -699,7 +711,7 @@ function BlockCardComponent({
                   aria-label={block.title || "Video content"}
                 />
 
-                {/* Video badge - only show before video has played */}
+                {/* Video badge - only show when video hasn't been played yet */}
                 <div
                   className={`pointer-events-none absolute bottom-2 left-2 z-20 flex items-center gap-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-white backdrop-blur-sm transition-opacity duration-200 ${
                     hasVideoPlayed ? "opacity-0" : "opacity-100"

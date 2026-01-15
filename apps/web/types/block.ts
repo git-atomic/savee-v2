@@ -13,6 +13,9 @@ export interface Block {
   status: "pending" | "fetched" | "scraped" | "uploaded" | "error";
   color_hexes?: string[] | null;
   colors?: Array<{ r: number; g: number; b: number }> | null;
+  og_title?: string | null;
+  og_description?: string | null;
+  og_image_url?: string | null;
 }
 
 export interface BlocksResponse {

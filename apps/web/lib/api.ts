@@ -88,15 +88,29 @@ export async function getPresignedUrl(r2Key: string): Promise<string | null> {
 export function getBlockMediaUrl(block: Block): string {
   // High‑quality thumbnail selection for grid blocks.
   //
-  // Priority (highest → lowest quality / reliability):
+  // For videos, prioritize thumbnail_url for better performance.
+  // For images, prioritize R2 key (best quality) then image_url.
+  //
+  // Priority for videos:
+  // 1. thumbnail_url (best for video previews)
+  // 2. R2 key via our `/api/media` proxy
+  // 3. image_url (if available)
+  // 4. video_url (last resort)
+  //
+  // Priority for images:
   // 1. R2 key via our `/api/media` proxy (final uploaded asset, best quality)
   // 2. Original image URL from the source (`image_url`)
   // 3. Remote thumbnail (`thumbnail_url`) as a fallback only
-  // 4. Video URL (last‑resort thumbnail for video‑only items)
   //
   // IMPORTANT:
   // - Always go through `/api/media` when using R2 so we stay on the same
   //   origin as the frontend (avoids CORS / port issues).
+  const isVideo = block.media_type === "video" || Boolean(block.video_url);
+
+  if (isVideo && block.thumbnail_url) {
+    return block.thumbnail_url;
+  }
+
   if (block.r2_key) {
     return `/api/media?key=${encodeURIComponent(block.r2_key)}`;
   }
@@ -170,7 +184,7 @@ export async function fetchUsers(
     params.set("cursor", cursor);
   }
 
-  if (q && q.trim().length > 0) {
+  if (q && typeof q === "string" && q.trim().length > 0) {
     params.set("q", q.trim());
   }
 
@@ -235,4 +249,84 @@ export function getUserAvatarUrl(user: User): string {
     return user.profile_image_url;
   }
   return "";
+}
+
+export interface UserResponse {
+  success: boolean;
+  user?: User;
+  error?: string;
+}
+
+export async function fetchUserByUsername(
+  username: string,
+  signal?: AbortSignal
+): Promise<UserResponse> {
+  try {
+    const response = await fetch(`/api/users/${encodeURIComponent(username)}`, {
+      signal,
+      headers: {
+        "Cache-Control": "no-cache",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch user: ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as UserResponse;
+    return data;
+  } catch (error) {
+    throw error;
+  }
+}
+
+export async function fetchBlocksByUsername(
+  username: string,
+  cursor?: string | null,
+  limit: number = 50,
+  signal?: AbortSignal
+): Promise<BlocksResponse> {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+    origin: "user",
+    username: username,
+  });
+
+  if (cursor) {
+    params.set("cursor", cursor);
+  }
+
+  const cacheKey = `blocks-user-${username}-${cursor || "initial"}-${limit}`;
+  const cached = cache.get(cacheKey);
+
+  // Return cached data if still valid
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    return cached.data;
+  }
+
+  try {
+    const response = await fetch(`/api/blocks?${params.toString()}`, {
+      signal,
+      headers: {
+        "Cache-Control": "no-cache",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch blocks: ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as BlocksResponse;
+
+    // Cache the response
+    cache.set(cacheKey, { data, timestamp: Date.now() });
+
+    return data;
+  } catch (error) {
+    // Return cached data on error if available
+    if (cached) {
+      return cached.data;
+    }
+    throw error;
+  }
 }

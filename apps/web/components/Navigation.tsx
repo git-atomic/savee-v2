@@ -164,8 +164,8 @@ export function Navigation() {
                   <Settings className="size-4" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent 
-                align="end" 
+              <PopoverContent
+                align="end"
                 side="bottom"
                 sideOffset={8}
                 className="w-80"

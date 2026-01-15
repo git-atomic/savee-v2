@@ -23,9 +23,7 @@ function UserCardComponent({ user }: UserCardProps) {
 
   return (
     <Link
-      href={user.profile_url}
-      target="_blank"
-      rel="noopener noreferrer"
+      href={`/users/${user.username}`}
       className="group block"
     >
       <div className="rounded-lg border border-border bg-card transition-all hover:border-foreground/20 hover:shadow-md overflow-hidden">

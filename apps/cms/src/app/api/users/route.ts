@@ -19,12 +19,13 @@ export async function GET(req: NextRequest) {
       parseInt(url.searchParams.get("limit") || "50", 10) || 50,
       200
     );
-    const q = url.searchParams.get("q") || undefined;
+    const qParam = url.searchParams.get("q");
+    const q = typeof qParam === "string" ? qParam : undefined;
     const cursor = url.searchParams.get("cursor") || undefined; // base64 { blockCount:number, id:number }
 
     const where: string[] = [];
     const params: any[] = [];
-    if (q && q.trim().length > 1) {
+    if (q && typeof q === "string" && q.trim().length > 1) {
       const like = `%${q.trim()}%`;
       where.push(
         `(su.username ILIKE $${params.length + 1} OR su.display_name ILIKE $${
