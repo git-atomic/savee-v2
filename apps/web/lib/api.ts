@@ -86,23 +86,27 @@ export async function getPresignedUrl(r2Key: string): Promise<string | null> {
 }
 
 export function getBlockMediaUrl(block: Block): string {
-  // Priority: R2 key via Next.js proxy (bypass direct CMS calls) > thumbnail > image > video
+  // High‑quality thumbnail selection for grid blocks.
+  //
+  // Priority (highest → lowest quality / reliability):
+  // 1. R2 key via our `/api/media` proxy (final uploaded asset, best quality)
+  // 2. Original image URL from the source (`image_url`)
+  // 3. Remote thumbnail (`thumbnail_url`) as a fallback only
+  // 4. Video URL (last‑resort thumbnail for video‑only items)
   //
   // IMPORTANT:
-  // - Hitting the CMS / R2 presign endpoint directly from the browser can fail
-  //   locally (wrong port) or in prod (CORS / network isolation).
-  // - Instead, always go through our own `/api/media` route, which runs on the
-  //   same origin as the frontend and internally talks to the CMS.
+  // - Always go through `/api/media` when using R2 so we stay on the same
+  //   origin as the frontend (avoids CORS / port issues).
   if (block.r2_key) {
     return `/api/media?key=${encodeURIComponent(block.r2_key)}`;
   }
 
-  if (block.thumbnail_url) {
-    return block.thumbnail_url;
-  }
-
   if (block.image_url) {
     return block.image_url;
+  }
+
+  if (block.thumbnail_url) {
+    return block.thumbnail_url;
   }
 
   if (block.video_url) {
