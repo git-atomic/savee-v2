@@ -1,0 +1,14 @@
+# Netlify configuration for CMS (apps/cms)
+# Use this as a reference when setting up the CMS site on Netlify
+
+[build]
+  # Build the Payload CMS app
+  base = "apps/cms"
+  command = "cd apps/cms && npm install && npm run build"
+  publish = "apps/cms/.next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Next.js configuration - Netlify will auto-detect Next.js
+# The @netlify/plugin-nextjs is automatically installed

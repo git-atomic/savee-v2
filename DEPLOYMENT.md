@@ -4,8 +4,8 @@
 
 This project has three components:
 1. **Web App** (`apps/web`) - Next.js frontend → Deploy to **Netlify**
-2. **CMS** (`apps/cms`) - Payload CMS → Deploy to **Vercel** or **Railway**
-3. **Worker** (`apps/worker`) - Python scraper → Deploy to **Railway**, **Render**, or **VPS**
+2. **CMS** (`apps/cms`) - Payload CMS → Deploy to **Netlify**
+3. **Worker** (`apps/worker`) - Python scraper → Run on **GitHub Actions**
 
 ---
 
@@ -48,136 +48,94 @@ The `netlify.toml` file is already configured at the root. Make sure:
 
 ---
 
-## 🗄️ CMS Deployment (Vercel/Railway)
+## 🗄️ CMS Deployment (Netlify)
 
-### Option 1: Vercel (Recommended for Next.js)
+### Steps
 
-1. **Connect Repository**
-   - Go to [Vercel Dashboard](https://vercel.com)
-   - Import your repository
-   - Set root directory to `apps/cms`
+1. **Create New Site on Netlify**
+   - Go to [Netlify Dashboard](https://app.netlify.com)
+   - Click "Add new site" → "Import an existing project"
+   - Connect your GitHub repository (same repo as web app)
 
-2. **Configure Build**
-   - Framework: Next.js
-   - Build command: `npm run build`
-   - Output directory: `.next`
+2. **Configure Build Settings**
+   - **Base directory**: `apps/cms`
+   - **Build command**: `cd apps/cms && npm install && npm run build`
+   - **Publish directory**: `apps/cms/.next`
+   - **Node version**: `20` (set in Site settings → Environment)
 
-3. **Environment Variables**
+3. **Set Environment Variables**
+   In Netlify Dashboard → Site settings → Environment variables, add:
    ```
+   NODE_ENV=production
    DATABASE_URI=your-neon-postgres-url
    PAYLOAD_SECRET=your-secret-key
-   NODE_ENV=production
-   ```
-
-### Option 2: Railway
-
-1. Create new project on Railway
-2. Connect GitHub repository
-3. Add PostgreSQL service (or use Neon)
-4. Set root directory to `apps/cms`
-5. Add environment variables
-
----
-
-## 🤖 Worker Deployment
-
-The Python worker needs to run continuously. Options:
-
-### Option 1: Railway (Easiest)
-
-1. **Create New Service**
-   - Add new service → GitHub repo
-   - Set root directory to `apps/worker`
-
-2. **Configure**
-   - **Start command**: `python -m app.cli run --source-id <id>`
-   - Or use a script that runs continuously
-
-3. **Environment Variables**
-   ```
-   DATABASE_URL=your-postgres-url
-   R2_ENDPOINT_URL=https://your-account.r2.cloudflarestorage.com
-   R2_BUCKET_NAME=your-bucket
-   R2_ACCESS_KEY_ID=your-key
-   R2_SECRET_ACCESS_KEY=your-secret
    ```
 
 4. **Deploy**
-   - Railway will auto-deploy on push
-   - Service runs continuously
+   - Netlify will automatically deploy on push
+   - Or trigger manually from the dashboard
 
-### Option 2: Render
+### Note
+You'll have two separate Netlify sites:
+- One for `apps/web` (frontend)
+- One for `apps/cms` (admin/API)
 
-1. Create new **Background Worker**
-2. Connect GitHub repo
-3. Set root directory to `apps/worker`
-4. Build command: `pip install -r requirements.txt`
-5. Start command: `python -m app.cli run --source-id <id>`
-6. Add environment variables
+---
 
-### Option 3: VPS (DigitalOcean, AWS EC2, etc.)
+## 🤖 Worker Deployment (GitHub Actions)
 
-1. **SSH into server**
-2. **Install dependencies**:
-   ```bash
-   sudo apt update
-   sudo apt install python3.11 python3-pip postgresql-client
+The Python worker runs on GitHub Actions, either on a schedule or manually triggered.
+
+### Setup
+
+1. **Add GitHub Secrets**
+   Go to your repository → Settings → Secrets and variables → Actions → New repository secret
+   
+   Add these secrets:
+   ```
+   DATABASE_URL=your-neon-postgres-url
+   R2_ENDPOINT_URL=https://your-account.r2.cloudflarestorage.com
+   R2_BUCKET_NAME=your-bucket-name
+   R2_ACCESS_KEY_ID=your-r2-access-key
+   R2_SECRET_ACCESS_KEY=your-r2-secret-key
    ```
 
-3. **Clone repository**:
-   ```bash
-   git clone your-repo-url
-   cd scrapesavee/apps/worker
-   pip install -r requirements.txt
-   ```
+2. **Workflow Configuration**
+   The workflow file (`.github/workflows/worker.yml`) is already configured:
+   - **Scheduled runs**: Every hour (configurable via cron)
+   - **Manual trigger**: Go to Actions → ScrapeSavee Worker → Run workflow
+   - **Auto-run on push**: When worker code changes
 
-4. **Set up systemd service**:
-   Create `/etc/systemd/system/scrapesavee-worker.service`:
-   ```ini
-   [Unit]
-   Description=ScrapeSavee Worker
-   After=network.target
+3. **How It Works**
+   - The workflow runs on GitHub's Ubuntu runners
+   - Installs Python 3.11 and dependencies
+   - Runs the worker with specified source ID
+   - Timeout: 60 minutes (adjustable)
 
-   [Service]
-   Type=simple
-   User=your-user
-   WorkingDirectory=/path/to/scrapesavee/apps/worker
-   Environment="DATABASE_URL=your-db-url"
-   Environment="R2_ENDPOINT_URL=your-r2-url"
-   Environment="R2_BUCKET_NAME=your-bucket"
-   Environment="R2_ACCESS_KEY_ID=your-key"
-   Environment="R2_SECRET_ACCESS_KEY=your-secret"
-   ExecStart=/usr/bin/python3 -m app.cli run --source-id <id>
-   Restart=always
+4. **Manual Trigger**
+   - Go to Actions tab in GitHub
+   - Select "ScrapeSavee Worker"
+   - Click "Run workflow"
+   - Enter the source ID you want to process
+   - Click "Run workflow"
 
-   [Install]
-   WantedBy=multi-user.target
-   ```
+### Customizing Schedule
 
-5. **Start service**:
-   ```bash
-   sudo systemctl enable scrapesavee-worker
-   sudo systemctl start scrapesavee-worker
-   sudo systemctl status scrapesavee-worker
-   ```
+Edit `.github/workflows/worker.yml` to change the cron schedule:
+```yaml
+schedule:
+  - cron: '0 * * * *'  # Every hour
+  # Examples:
+  # '0 */2 * * *'  # Every 2 hours
+  # '0 0 * * *'    # Daily at midnight
+  # '*/30 * * * *' # Every 30 minutes
+```
 
-### Option 4: Docker (Any Platform)
+### Monitoring
 
-1. **Create Dockerfile** in `apps/worker/`:
-   ```dockerfile
-   FROM python:3.11-slim
-   WORKDIR /app
-   COPY requirements.txt .
-   RUN pip install --no-cache-dir -r requirements.txt
-   COPY . .
-   CMD ["python", "-m", "app.cli", "run", "--source-id", "1"]
-   ```
-
-2. **Deploy to**:
-   - Railway (supports Docker)
-   - Render (supports Docker)
-   - Fly.io
-   - Any Docker host
+- View runs in the Actions tab
+- Check logs for each run
+- Failed runs will upload logs as artifacts
 
 ---
 
@@ -188,29 +146,31 @@ The Python worker needs to run continuously. Options:
 After deploying each service, update:
 
 1. **Web App** (Netlify):
-   - `NEXT_PUBLIC_CMS_URL` = Your CMS URL
-   - `CMS_URL` = Your CMS URL (for server-side)
+   - `NEXT_PUBLIC_CMS_URL` = Your CMS Netlify URL
+   - `CMS_URL` = Your CMS Netlify URL (for server-side)
 
-2. **CMS** (Vercel/Railway):
+2. **CMS** (Netlify):
    - `DATABASE_URI` = Your Neon PostgreSQL URL
-   - `PAYLOAD_SECRET` = Random secret key
+   - `PAYLOAD_SECRET` = Random secret key (generate with `openssl rand -base64 32`)
 
-3. **Worker** (Railway/Render/VPS):
+3. **Worker** (GitHub Actions):
+   - Add all secrets in GitHub repository settings
    - `DATABASE_URL` = Same Neon PostgreSQL URL
-   - R2 credentials from Cloudflare
+   - R2 credentials from Cloudflare dashboard
 
 ---
 
 ## ✅ Post-Deployment Checklist
 
 - [ ] Web app accessible at Netlify URL
-- [ ] CMS admin accessible at Vercel/Railway URL
-- [ ] Worker running and processing jobs
+- [ ] CMS admin accessible at Netlify URL (different site)
+- [ ] GitHub Actions workflow enabled and running
+- [ ] Worker secrets added to GitHub repository
 - [ ] Database connections working
 - [ ] R2 storage accessible
-- [ ] Environment variables set correctly
+- [ ] Environment variables set correctly in both Netlify sites
 - [ ] CORS configured (if needed)
-- [ ] SSL certificates active (automatic on Netlify/Vercel)
+- [ ] SSL certificates active (automatic on Netlify)
 
 ---
 
@@ -222,9 +182,11 @@ After deploying each service, update:
 - **404 errors**: Check Next.js routing configuration
 
 ### Worker Issues
-- **Connection errors**: Verify database URL and credentials
-- **R2 upload fails**: Check R2 credentials and bucket permissions
-- **Worker stops**: Check logs, ensure it's set to restart on failure
+- **Workflow not running**: Check GitHub Actions is enabled for the repository
+- **Connection errors**: Verify secrets are set correctly in GitHub
+- **R2 upload fails**: Check R2 credentials in GitHub secrets
+- **Timeout errors**: Increase timeout in workflow file if jobs take longer
+- **Manual trigger fails**: Verify source ID exists in database
 
 ### Database Issues
 - **Connection timeout**: Check Neon connection pooling settings
@@ -234,10 +196,11 @@ After deploying each service, update:
 
 ## 📊 Monitoring
 
-- **Netlify**: Built-in analytics and logs
-- **Vercel**: Built-in analytics
-- **Railway**: Logs and metrics dashboard
-- **Worker**: Check logs in deployment platform
+- **Netlify**: Built-in analytics and logs for both web and CMS sites
+- **GitHub Actions**: View workflow runs, logs, and artifacts in Actions tab
+- **Worker Logs**: Check GitHub Actions run logs for each execution
+- **Database**: Monitor via Neon dashboard
+- **R2 Storage**: Monitor via Cloudflare dashboard
 
 ---
 
