@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { X, ExternalLink, Search, ArrowLeft } from "lucide-react";
 import type { Block } from "@/types/block";
-import { getBlockMediaUrl, getBlockVideoUrl, getUserAvatarUrl } from "@/lib/api";
+import { getBlockMediaUrl, getBlockVideoUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   Popover,
@@ -20,8 +20,6 @@ interface BlockDetailsProps {
 export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [isVideoLoaded, setIsVideoLoaded] = useState(false);
-  const [isVideoPlaying, setIsVideoPlaying] = useState(true);
 
   const isVideo = block.media_type === "video" || !!block.video_url;
   const mediaUrl = getBlockMediaUrl(block);
@@ -50,10 +48,10 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
     
     // Look for API endpoint link matching /api/items/.../source pattern
     for (const link of block.links) {
-      const url = (link as any).url || (link as any).href || "";
+      const url = (link && typeof link === 'object' && 'url' in link) ? link.url : "";
       
       // Check if it's an API source endpoint
-      if (/\/api\/items\/[^/]+\/source\/?$/i.test(url)) {
+      if (url && /\/api\/items\/[^/]+\/source\/?$/i.test(url)) {
         return url;
       }
     }
@@ -68,6 +66,17 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
 
   const handleColorClick = (hex: string) => {
     router.push(`/search?q=${encodeURIComponent(hex)}`);
+  };
+
+  // Helper to get user avatar URL from partial user data
+  const getUserAvatarUrlFromPartial = (user: { avatar_r2_key?: string | null; profile_image_url?: string | null; username: string }) => {
+    if (user.avatar_r2_key) {
+      return `/api/media?key=${encodeURIComponent(user.avatar_r2_key)}`;
+    }
+    if (user.profile_image_url) {
+      return user.profile_image_url;
+    }
+    return `https://avatar.vercel.sh/${user.username}`;
   };
 
 
@@ -114,7 +123,7 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
                         title={user.display_name || user.username}
                       >
                         <img 
-                          src={getUserAvatarUrl(user as any) || `https://avatar.vercel.sh/${user.username}`} 
+                          src={getUserAvatarUrlFromPartial(user)} 
                           alt={user.username}
                           className="w-full h-full object-cover"
                         />
@@ -151,7 +160,7 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
                       >
                         <div className="w-10 h-10 rounded-full border-2 border-[#111] overflow-hidden bg-muted shrink-0">
                           <img 
-                            src={getUserAvatarUrl(user as any) || `https://avatar.vercel.sh/${user.username}`} 
+                            src={getUserAvatarUrlFromPartial(user)} 
                             alt={user.username}
                             className="w-full h-full object-cover"
                           />
@@ -187,9 +196,6 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
               controls
               playsInline
               className="max-h-full max-w-full object-contain rounded-sm"
-              onLoadedData={() => setIsVideoLoaded(true)}
-              onPlay={() => setIsVideoPlaying(true)}
-              onPause={() => setIsVideoPlaying(false)}
             />
           ) : (
             <img
@@ -202,7 +208,7 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
       </div>
 
       {/* Sidebar - Info Panel */}
-      <aside className="relative w-[450px] border-l border-white/5 bg-background p-10 flex flex-col gap-10 overflow-y-auto hidden lg:flex">
+      <aside className="relative w-[450px] border-l border-white/5 bg-background p-10 flex-col gap-10 overflow-y-auto hidden lg:flex">
         {/* Close Button - Top Right of Sidebar */}
         <button
           onClick={handleClose}
