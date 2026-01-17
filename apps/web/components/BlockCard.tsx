@@ -1,6 +1,15 @@
 "use client";
 
-import { useState, useRef, memo, useEffect, useCallback, useMemo, startTransition } from "react";
+import {
+  useState,
+  useRef,
+  memo,
+  useEffect,
+  useCallback,
+  useMemo,
+  startTransition,
+} from "react";
+import { useRouter } from "next/navigation";
 import type { Block } from "@/types/block";
 import { getBlockMediaUrl, getBlockVideoUrl } from "@/lib/api";
 import { getDeterministicAspectRatio } from "@/lib/masonry-utils";
@@ -56,6 +65,7 @@ function BlockCardComponent({
   priority = false,
   aspectRatio: propAspectRatio,
 }: BlockCardProps) {
+  const router = useRouter();
   const wasPreviouslyLoaded = loadedBlocksCache.has(block.id);
 
   // State management
@@ -243,7 +253,12 @@ function BlockCardComponent({
     video.crossOrigin = "anonymous";
 
     video.onloadedmetadata = () => {
-      if (!cancelled && video && video.videoWidth > 0 && video.videoHeight > 0) {
+      if (
+        !cancelled &&
+        video &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0
+      ) {
         setLocalAspectRatio(video.videoWidth / video.videoHeight);
       }
       cleanup();
@@ -306,21 +321,24 @@ function BlockCardComponent({
   useEffect(() => {
     if (!isVideo || !videoUrl || !shouldLoad || isVideoLoaded) return;
 
-    const timeout = setTimeout(() => {
-      if (videoRef.current && !isVideoLoaded) {
-        const video = videoRef.current;
-        if (video.videoWidth > 0 && video.videoHeight > 0) {
-          setIsVideoLoaded(true);
-          setIsLoaded(true);
-        } else if (video.readyState >= 2) {
-          setIsVideoLoaded(true);
-          setIsLoaded(true);
-        } else if (video.readyState >= 1) {
-          setIsVideoLoaded(true);
-          setIsLoaded(true);
+    const timeout = setTimeout(
+      () => {
+        if (videoRef.current && !isVideoLoaded) {
+          const video = videoRef.current;
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
+            setIsVideoLoaded(true);
+            setIsLoaded(true);
+          } else if (video.readyState >= 2) {
+            setIsVideoLoaded(true);
+            setIsLoaded(true);
+          } else if (video.readyState >= 1) {
+            setIsVideoLoaded(true);
+            setIsLoaded(true);
+          }
         }
-      }
-    }, priority ? VIDEO_LOAD_TIMEOUT_PRIORITY : VIDEO_LOAD_TIMEOUT_LAZY);
+      },
+      priority ? VIDEO_LOAD_TIMEOUT_PRIORITY : VIDEO_LOAD_TIMEOUT_LAZY
+    );
 
     return () => clearTimeout(timeout);
   }, [isVideo, videoUrl, shouldLoad, isVideoLoaded, priority]);
@@ -479,13 +497,16 @@ function BlockCardComponent({
   const handleImageLoad = useCallback(() => {
     if (imgRef.current && !isVideo) {
       const { naturalWidth, naturalHeight } = imgRef.current;
-      if (
-        naturalWidth > 0 &&
-        naturalHeight > 0 &&
-        aspectRatio === null &&
-        propAspectRatio === undefined
-      ) {
-        setLocalAspectRatio(naturalWidth / naturalHeight);
+      if (naturalWidth > 0 && naturalHeight > 0) {
+        const naturalRatio = naturalWidth / naturalHeight;
+        // Update if no ratio provided OR if provided ratio is significantly different (e.g. was a fallback)
+        if (
+          aspectRatio === null ||
+          propAspectRatio === undefined ||
+          Math.abs((aspectRatio ?? 0) - naturalRatio) > 0.01
+        ) {
+          setLocalAspectRatio(naturalRatio);
+        }
       }
     }
     // Regardless of media type, once the thumbnail has loaded we can
@@ -500,10 +521,7 @@ function BlockCardComponent({
 
     const { videoWidth, videoHeight } = video;
     if (videoWidth > 0 && videoHeight > 0) {
-      if (
-        aspectRatio === null &&
-        propAspectRatio === undefined
-      ) {
+      if (aspectRatio === null && propAspectRatio === undefined) {
         setLocalAspectRatio(videoWidth / videoHeight);
       }
       setIsVideoLoaded(true);
@@ -536,6 +554,10 @@ function BlockCardComponent({
   const handleMouseLeave = useCallback(() => {
     setIsHovered(false);
   }, []);
+
+  const handleClick = useCallback(() => {
+    router.push(`/blocks/${block.id}`);
+  }, [router, block.id]);
 
   // Memoized video event handlers
   const videoEventHandlers = useMemo(
@@ -574,7 +596,7 @@ function BlockCardComponent({
           if (loopTimeoutRef.current) {
             clearTimeout(loopTimeoutRef.current);
           }
-          
+
           // Wait before restarting
           loopTimeoutRef.current = setTimeout(() => {
             const video = videoRef.current;
@@ -614,7 +636,7 @@ function BlockCardComponent({
   return (
     <article
       ref={containerCallbackRef}
-      className="group relative w-full break-inside-avoid"
+      className="group relative w-full rounded-[4px] break-inside-avoid cursor-pointer"
       style={{
         contentVisibility: "auto",
         containIntrinsicSize: displayAspectRatio
@@ -625,41 +647,19 @@ function BlockCardComponent({
       }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onClick={handleClick}
       aria-label={block.title || "Content block"}
     >
       <div
-        className="relative w-full overflow-hidden rounded-[4px]"
+        className="relative w-full overflow-hidden"
         style={{
-          // Use aspect-ratio to reserve space and prevent layout shifts
           aspectRatio: displayAspectRatio,
           minHeight: 0,
-          backgroundColor: !isLoaded ? skeletonColor : "transparent",
         }}
       >
         {/* Media Content */}
         {(shouldLoad || wasPreviouslyLoaded) && (
-          <div className="relative w-full h-full">
-            {/* Skeleton placeholder */}
-            {!isLoaded && !hasError && (
-              <div
-                className="absolute inset-0 z-0"
-                style={{
-                  backgroundColor: skeletonColor,
-                  opacity: 0.25,
-                }}
-                aria-hidden="true"
-              >
-                <div
-                  className="w-full h-full"
-                  style={{
-                    background: `linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.15) 50%, transparent 100%)`,
-                    backgroundSize: "200% 100%",
-                    animation: "shimmer 1.5s infinite linear",
-                  }}
-                />
-              </div>
-            )}
-
+          <>
             {isVideo && videoUrl ? (
               <>
                 {/* Thumbnail image only visible when video hasn't been played yet */}
@@ -668,7 +668,7 @@ function BlockCardComponent({
                     ref={imgRef}
                     src={imageSrc}
                     alt={block.title || "Video thumbnail"}
-                    className="absolute inset-0 h-full w-full object-cover"
+                    className="absolute inset-0 h-full w-full"
                     loading={priority ? "eager" : "lazy"}
                     decoding="async"
                     fetchPriority={priority ? "high" : "auto"}
@@ -679,6 +679,7 @@ function BlockCardComponent({
                       transition: wasPreviouslyLoaded
                         ? "none"
                         : "opacity 0.25s ease-out",
+                      objectFit: "cover",
                     }}
                     aria-hidden={hasVideoPlayed}
                   />
@@ -702,7 +703,8 @@ function BlockCardComponent({
                   onEnded={videoEventHandlers.onEnded}
                   onProgress={videoEventHandlers.onProgress}
                   style={{
-                    opacity: isHovered || isVideoPlaying || hasVideoPlayed ? 1 : 0,
+                    opacity:
+                      isHovered || isVideoPlaying || hasVideoPlayed ? 1 : 0,
                     transition: wasPreviouslyLoaded
                       ? "none"
                       : "opacity 0.25s ease-out",
@@ -711,10 +713,10 @@ function BlockCardComponent({
                   aria-label={block.title || "Video content"}
                 />
 
-                {/* Video badge - only show when video hasn't been played yet */}
+                {/* Video badge - visible when not hovering */}
                 <div
                   className={`pointer-events-none absolute bottom-2 left-2 z-20 flex items-center gap-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-white backdrop-blur-sm transition-opacity duration-200 ${
-                    hasVideoPlayed ? "opacity-0" : "opacity-100"
+                    isHovered ? "opacity-0" : "opacity-100"
                   }`}
                   aria-label="Video content"
                 >
@@ -747,7 +749,7 @@ function BlockCardComponent({
                 ref={imgRef}
                 src={imageSrc}
                 alt={block.title || "Block image"}
-                className="absolute inset-0 h-full w-full object-cover"
+                className="absolute inset-0 h-full w-full"
                 loading={priority ? "eager" : "lazy"}
                 decoding="async"
                 fetchPriority={priority ? "high" : "auto"}
@@ -758,7 +760,7 @@ function BlockCardComponent({
                   transition: wasPreviouslyLoaded
                     ? "none"
                     : "opacity 0.3s ease-out",
-                  objectFit: "contain",
+                  objectFit: "cover",
                 }}
               />
             ) : null}
@@ -768,7 +770,7 @@ function BlockCardComponent({
               className="pointer-events-none absolute inset-0 z-10 bg-black/0 transition-colors duration-300 group-hover:bg-black/5"
               aria-hidden="true"
             />
-          </div>
+          </>
         )}
       </div>
     </article>
