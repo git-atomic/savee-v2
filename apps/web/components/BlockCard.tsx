@@ -556,8 +556,8 @@ function BlockCardComponent({
   }, []);
 
   const handleClick = useCallback(() => {
-    router.push(`/blocks/${block.id}`);
-  }, [router, block.id]);
+    router.push(`/b/${block.external_id}`);
+  }, [router, block.external_id]);
 
   // Memoized video event handlers
   const videoEventHandlers = useMemo(

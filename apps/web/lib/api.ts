@@ -66,6 +66,29 @@ export async function fetchBlocks(
   }
 }
 
+export async function fetchBlockById(
+  id: string,
+  signal?: AbortSignal
+): Promise<Block> {
+  try {
+    const response = await fetch(`/api/blocks/${id}`, {
+      signal,
+      headers: {
+        "Cache-Control": "no-cache",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch block: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data as Block;
+  } catch (error) {
+    throw error;
+  }
+}
+
 export async function getPresignedUrl(r2Key: string): Promise<string | null> {
   try {
     const response = await fetch(

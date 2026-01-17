@@ -18,6 +18,7 @@ import { SearchPopover, type SearchPopoverRef } from "./SearchPopover";
 export function Navigation() {
   const pathname = usePathname();
   const { columns, gap, setColumns, setGap } = useLayoutSettings();
+  
   // Always start with true to match server render, then update after hydration
   const [isVisible, setIsVisible] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -25,6 +26,9 @@ export function Navigation() {
   const lastScrollY = useRef(0);
   const scrollThreshold = 10; // Minimum scroll distance to trigger hide/show
   const searchPopoverRef = useRef<SearchPopoverRef>(null);
+  
+  // Hide navigation when viewing block details
+  const isBlockDetail = pathname?.startsWith("/b/");
 
   const navItems = [
     { href: "/", label: "Home" },
@@ -33,6 +37,10 @@ export function Navigation() {
   ];
 
   useEffect(() => {
+    // Don't set up scroll handlers if we're on a block detail page
+    if (isBlockDetail) {
+      return;
+    }
     // Set initial scroll position and visibility after hydration
     lastScrollY.current = window.scrollY;
     setTimeout(() => {
@@ -81,7 +89,12 @@ export function Navigation() {
         cancelAnimationFrame(rafRef.current);
       }
     };
-  }, [scrollThreshold]);
+  }, [scrollThreshold, isBlockDetail]);
+
+  // Don't render navigation on block detail pages
+  if (isBlockDetail) {
+    return null;
+  }
 
   return (
     <>

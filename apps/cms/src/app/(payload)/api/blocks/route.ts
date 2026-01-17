@@ -138,15 +138,7 @@ export async function GET(req: NextRequest) {
       SELECT 
         b.*, 
         '${origin || "mixed"}' as origin,
-        NULL as source_username,
-        (
-          WITH users_union AS (
-            SELECT s2b.username AS uname
-            FROM block_sources bs2b JOIN sources s2b ON s2b.id = bs2b.source_id
-            WHERE bs2b.block_id = b.id AND s2b.source_type::text = 'user' AND s2b.username IS NOT NULL
-            UNION
-            SELECT u.username AS uname FROM user_blocks ub JOIN savee_users u ON u.id = ub.user_id WHERE ub.block_id = b.id
-          )
+        NULL as source_username,        (
           SELECT jsonb_build_object(
             'home', COALESCE((
               SELECT BOOL_OR(s2a.source_type::text = 'home')
@@ -158,15 +150,49 @@ export async function GET(req: NextRequest) {
               FROM block_sources bs2p JOIN sources s2p ON s2p.id = bs2p.source_id
               WHERE bs2p.block_id = b.id
             ), false),
-            'users', COALESCE((SELECT jsonb_agg(DISTINCT uname) FROM users_union), '[]'::jsonb),
-            'users_count', COALESCE((SELECT COUNT(DISTINCT uname)::int FROM users_union), 0),
+            'users', COALESCE((
+              SELECT jsonb_agg(jsonb_build_object(
+                'username', u.username,
+                'display_name', u.display_name,
+                'avatar_r2_key', u.avatar_r2_key,
+                'profile_image_url', u.profile_image_url
+              ))
+              FROM (
+                SELECT DISTINCT ON (u.username)
+                  u.username, u.display_name, u.avatar_r2_key, u.profile_image_url
+                FROM (
+                  SELECT s2b.username
+                  FROM block_sources bs2b 
+                  JOIN sources s2b ON s2b.id = bs2b.source_id
+                  WHERE bs2b.block_id = b.id AND s2b.source_type::text = 'user' AND s2b.username IS NOT NULL
+                  UNION
+                  SELECT u2.username FROM user_blocks ub JOIN savee_users u2 ON u2.id = ub.user_id WHERE ub.block_id = b.id
+                ) u_names
+                JOIN savee_users u ON u.username = u_names.username
+              ) u
+            ), '[]'::jsonb),
+            'users_count', COALESCE((
+              SELECT COUNT(DISTINCT uname)::int 
+              FROM (
+                SELECT s2b.username AS uname
+                FROM block_sources bs2b JOIN sources s2b ON s2b.id = bs2b.source_id
+                WHERE bs2b.block_id = b.id AND s2b.source_type::text = 'user' AND s2b.username IS NOT NULL
+                UNION
+                SELECT u.username AS uname FROM user_blocks ub JOIN savee_users u ON u.id = ub.user_id WHERE ub.block_id = b.id
+              ) users_union
+            ), 0),
             'tags', COALESCE((
               SELECT jsonb_agg(DISTINCT tag)
               FROM (
                 SELECT CASE WHEN s2c.source_type::text = 'user' THEN s2c.username ELSE s2c.source_type::text END AS tag
                 FROM block_sources bs2c JOIN sources s2c ON s2c.id = bs2c.source_id WHERE bs2c.block_id = b.id
                 UNION
-                SELECT uname AS tag FROM users_union
+                SELECT u.username AS tag 
+                FROM user_blocks ub JOIN savee_users u ON u.id = ub.user_id WHERE ub.block_id = b.id
+                UNION
+                SELECT s2b.username AS tag
+                FROM block_sources bs2b JOIN sources s2b ON s2b.id = bs2b.source_id
+                WHERE bs2b.block_id = b.id AND s2b.source_type::text = 'user' AND s2b.username IS NOT NULL
               ) tag_src
             ), '[]'::jsonb)
           )
