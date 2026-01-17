@@ -1,22 +1,14 @@
 [build]
   # Build the Next.js web app
   base = "apps/web"
-  command = "npm run build"
+  command = "cd apps/web && npm install && npm run build"
   publish = "apps/web/.next"
 
 [build.environment]
   NODE_VERSION = "20"
-  NPM_FLAGS = "--prefix apps/web"
 
-# Next.js configuration
-[[plugins]]
-  package = "@netlify/plugin-nextjs"
-
-# Redirect rules for Next.js
-[[redirects]]
-  from = "/*"
-  to = "/.netlify/functions/next"
-  status = 200
+# Next.js configuration - Netlify will auto-detect Next.js
+# The @netlify/plugin-nextjs is automatically installed
 
 # Environment variables (set these in Netlify dashboard)
 # DATABASE_URL - Your database connection string
