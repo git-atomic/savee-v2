@@ -1,0 +1,24 @@
+[build]
+  # Build the Next.js web app
+  base = "apps/web"
+  command = "npm run build"
+  publish = "apps/web/.next"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--prefix apps/web"
+
+# Next.js configuration
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Redirect rules for Next.js
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/next"
+  status = 200
+
+# Environment variables (set these in Netlify dashboard)
+# DATABASE_URL - Your database connection string
+# CMS_URL - Your CMS API URL (if separate)
+# NEXT_PUBLIC_CMS_URL - Public CMS URL for client-side calls
