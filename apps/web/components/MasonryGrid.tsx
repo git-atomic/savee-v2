@@ -183,7 +183,7 @@ export function MasonryGrid({
 
               return (
                 <BlockCard
-                  key={block.external_id || `block-${block.id}`}
+                  key={`block-${block.id}`}
                   block={block}
                   priority={isPriority}
                   aspectRatio={aspectRatios.get(block.id)}
