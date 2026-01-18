@@ -33,9 +33,9 @@ export function BlocksList(
 
   const loadBlocks = useCallback(
     async (nextCursor?: string | null, signal?: AbortSignal, attempt = 0) => {
-      // Prevent concurrent loads (race condition guard)
-      if (isLoadingRef.current && !nextCursor) {
-        return; // Initial load already in progress
+      // Prevent concurrent loads (race condition guard) using the ref
+      if (isLoadingRef.current) {
+        return;
       }
       
       try {
@@ -45,18 +45,13 @@ export function BlocksList(
           setIsLoading(true);
           setBlocks([]);
         } else {
-          // Prevent concurrent pagination loads
-          if (isLoadingMore) {
-            return;
-          }
           setIsLoadingMore(true);
         }
         setError(null);
 
-        const response = await fetchBlocks(nextCursor || null, 50, origin);
+        const response = await fetchBlocks(nextCursor || null, 50, origin, signal);
 
         if (signal?.aborted) {
-          isLoadingRef.current = false;
           return;
         }
 
@@ -65,14 +60,15 @@ export function BlocksList(
         if (nextCursor) {
           // Deduplicate blocks by ID to prevent duplicates from pagination overlap
           setBlocks((prev) => {
-            const existingIds = new Set(prev.map((b) => b.id));
-            const newBlocks = response.blocks.filter((b) => !existingIds.has(b.id));
+            // Normalize IDs to string for robust comparison
+            const existingIds = new Set(prev.map((b) => String(b.id)));
+            const newBlocks = response.blocks.filter((b) => !existingIds.has(String(b.id)));
             return [...prev, ...newBlocks];
           });
         } else {
           // Deduplicate initial load as well in case API returns duplicates
           const uniqueBlocks = response.blocks.filter(
-            (block, index, self) => index === self.findIndex((b) => b.id === block.id)
+            (block, index, self) => index === self.findIndex((b) => String(b.id) === String(block.id))
           );
           setBlocks(uniqueBlocks);
         }
@@ -96,6 +92,8 @@ export function BlocksList(
           setRetryCount(attempt + 1);
 
           retryTimeoutRef.current = setTimeout(() => {
+            // Reset loading ref so retry can proceed
+            isLoadingRef.current = false;
             loadBlocks(nextCursor, signal, attempt + 1);
           }, delay);
 
@@ -115,7 +113,7 @@ export function BlocksList(
         }
       }
     },
-    [origin, isLoadingMore]
+    [origin] // Removed isLoadingMore to make this function stable
   );
 
   useEffect(() => {
@@ -130,15 +128,16 @@ export function BlocksList(
         clearTimeout(retryTimeoutRef.current);
       }
     };
-  }, [loadBlocks]);
+  }, [loadBlocks]); // Now stable, will only run once or when origin changes
 
   const handleLoadMore = useCallback(() => {
-    if (!isLoadingMore && !isLoading && hasMore && cursor) {
+    // Only proceed if not already loading anything
+    if (!isLoadingRef.current && hasMore && cursor) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
       loadBlocks(cursor, controller.signal);
     }
-  }, [isLoadingMore, isLoading, hasMore, cursor, loadBlocks]);
+  }, [hasMore, cursor, loadBlocks]);
 
   const handleRetry = useCallback(() => {
     setError(null);

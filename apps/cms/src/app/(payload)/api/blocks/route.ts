@@ -30,11 +30,14 @@ export async function GET(req: NextRequest) {
     // Parse cursor for pagination
     let cursorSavedAt: string | null = null;
     let cursorId: string | null = null;
+    let cursorPop: number | null = null;
     if (cursor) {
       try {
-        const parsed = JSON.parse(Buffer.from(cursor, "base64").toString());
+        const decoded = Buffer.from(cursor, "base64").toString();
+        const parsed = JSON.parse(decoded);
         cursorSavedAt = parsed.saved_at;
-        cursorId = parsed.id;
+        cursorId = String(parsed.id);
+        cursorPop = parsed.pop_count !== undefined ? Number(parsed.pop_count) : null;
       } catch (e) {
         return NextResponse.json({ error: "Invalid cursor" }, { status: 400 });
       }
@@ -64,14 +67,44 @@ export async function GET(req: NextRequest) {
       );
       params.push(like);
     }
-    if (cursorSavedAt && cursorId) {
-      params.push(cursorSavedAt);
-      params.push(cursorId);
-      blockWhere.push(
-        `(b.saved_at < $${params.length - 1} OR (b.saved_at = $${
-          params.length - 1
-        } AND b.id < $${params.length}))`
-      );
+
+    // Stable pagination based on sorting
+    if (origin === "pop") {
+      if (cursorPop !== null && cursorSavedAt && cursorId) {
+        // Sort order for pop: count DESC, saved_at DESC, id DESC
+        params.push(cursorPop);
+        params.push(cursorSavedAt);
+        params.push(cursorId);
+        const p1 = params.length - 2; // cursorPop
+        const p2 = params.length - 1; // cursorSavedAt
+        const p3 = params.length;     // cursorId
+        
+        // We need to calculate the count in the WHERE clause for stable pagination
+        // This is expensive but necessary for stable pagination on a dynamic field
+        const countSQL = `(
+          SELECT COUNT(DISTINCT uname)::int
+          FROM (
+            SELECT s2b.username AS uname
+            FROM block_sources bs2b JOIN sources s2b ON s2b.id = bs2b.source_id
+            WHERE bs2b.block_id = b.id AND s2b.source_type::text = 'user' AND s2b.username IS NOT NULL
+            UNION
+            SELECT u.username AS uname FROM user_blocks ub JOIN savee_users u ON u.id = ub.user_id WHERE ub.block_id = b.id
+          ) users_union
+        )`;
+        
+        blockWhere.push(
+          `(${countSQL} < $${p1} OR (${countSQL} = $${p1} AND (b.saved_at < $${p2} OR (b.saved_at = $${p2} AND b.id < $${p3}))))`
+        );
+      }
+    } else {
+      if (cursorSavedAt && cursorId) {
+        // Default sort order: saved_at DESC, id DESC
+        params.push(cursorSavedAt);
+        params.push(cursorId);
+        blockWhere.push(
+          `(b.saved_at < $${params.length - 1} OR (b.saved_at = $${params.length - 1} AND b.id < $${params.length}))`
+        );
+      }
     }
 
     // NEW APPROACH: Use EXISTS to find blocks that INCLUDE the requested origin
@@ -134,11 +167,25 @@ export async function GET(req: NextRequest) {
       ? `WHERE ${whereParts.join(" AND ")}`
       : "";
 
+    // Calculate popularity count for ORDER BY and NEXT CURSOR
+    const popCountSQL = `(
+      SELECT COUNT(DISTINCT uname)::int
+      FROM (
+        SELECT s2b.username AS uname
+        FROM block_sources bs2b JOIN sources s2b ON s2b.id = bs2b.source_id
+        WHERE bs2b.block_id = b.id AND s2b.source_type::text = 'user' AND s2b.username IS NOT NULL
+        UNION
+        SELECT u.username AS uname FROM user_blocks ub JOIN savee_users u ON u.id = ub.user_id WHERE ub.block_id = b.id
+      ) users_union
+    )`;
+
     const query = `
       SELECT 
         b.*, 
         '${origin || "mixed"}' as origin,
-        NULL as source_username,        (
+        ${popCountSQL} as pop_count,
+        NULL as source_username,
+        (
           SELECT jsonb_build_object(
             'home', COALESCE((
               SELECT BOOL_OR(s2a.source_type::text = 'home')
@@ -201,31 +248,23 @@ export async function GET(req: NextRequest) {
       ${whereSQL}
       ORDER BY ${
         origin === "pop"
-          ? `(
-              SELECT COUNT(DISTINCT uname)::int
-              FROM (
-                SELECT s2b.username AS uname
-                FROM block_sources bs2b JOIN sources s2b ON s2b.id = bs2b.source_id
-                WHERE bs2b.block_id = b.id AND s2b.source_type::text = 'user' AND s2b.username IS NOT NULL
-                UNION
-                SELECT u.username AS uname FROM user_blocks ub JOIN savee_users u ON u.id = ub.user_id WHERE ub.block_id = b.id
-              ) users_union
-            ) DESC NULLS LAST, `
+          ? `pop_count DESC NULLS LAST, `
           : ""
-      }b.saved_at DESC NULLS LAST, b.created_at DESC NULLS LAST
+      }b.saved_at DESC NULLS LAST, b.id DESC NULLS LAST
       LIMIT $${params.length + 1}
     `;
     params.push(limit);
 
-    console.log("Blocks API Query:", query);
-    console.log("Blocks API Params:", params);
-
     const result = await payload.db.pool.query(query, params);
-    // Deduplicate blocks by ID as a final safeguard (in case DISTINCT ON doesn't work as expected)
+    
+    // Deduplicate by external_id and id - use external_id as primary key to avoid logical duplicates
+    // This handles cases where the same content might have been scraped multiple times incorrectly
     const blocksMap = new Map();
     result.rows.forEach((block: any) => {
-      if (!blocksMap.has(block.id)) {
-        blocksMap.set(block.id, block);
+      // Prioritize identifying by external_id to eliminate cross-record duplicates
+      const key = block.external_id || block.id;
+      if (!blocksMap.has(key)) {
+        blocksMap.set(key, block);
       }
     });
     const blocks = Array.from(blocksMap.values());
@@ -237,6 +276,7 @@ export async function GET(req: NextRequest) {
         JSON.stringify({
           saved_at: lastBlock.saved_at,
           id: lastBlock.id,
+          pop_count: lastBlock.pop_count,
         })
       ).toString("base64");
     }
