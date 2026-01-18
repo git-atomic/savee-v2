@@ -1,8 +1,8 @@
 name: Engine Monitor
 
 on:
-  schedule:
-    - cron: "0 */6 * * *" # every 6 hours (4 times/day) - optimized for free tier
+  # schedule:
+  #   - cron: "0 */6 * * *" # DISABLED - free tier exhausted, will re-enable after reset
   workflow_dispatch:
     inputs:
       sourceId:

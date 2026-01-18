@@ -1,9 +1,9 @@
 name: ScrapeSavee Worker
 
 on:
-  # Run on schedule (4 times/day to stay within free tier)
-  schedule:
-    - cron: '0 */6 * * *'  # Every 6 hours (4 times/day) - optimized for free tier
+  # Run on schedule (DISABLED - free tier exhausted, will re-enable after reset)
+  # schedule:
+  #   - cron: '0 */6 * * *'  # Every 6 hours (4 times/day) - optimized for free tier
   # Allow manual trigger
   workflow_dispatch:
     inputs:
