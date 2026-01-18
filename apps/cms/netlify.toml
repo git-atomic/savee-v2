@@ -13,8 +13,4 @@
 [functions]
   node_bundler = "esbuild"
 
-# Redirects for API routes
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
+# Redirects for API routes are handled automatically by Next.js Runtime
