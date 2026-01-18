@@ -1,6 +1,6 @@
 [build]
-  command = "cd apps/cms && npm run build"
-  publish = "apps/cms/.next"
+  command = "npm install && npm run build"
+  publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"

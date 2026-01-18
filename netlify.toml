@@ -1,8 +1,8 @@
 [build]
   # Build the Next.js web app
   base = "apps/web"
-  command = "cd apps/web && npm install && npm run build"
-  publish = "apps/web/.next"
+  command = "npm install && npm run build"
+  publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"
