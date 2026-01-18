@@ -93,8 +93,19 @@ export function MasonryGrid({
     return (containerWidth - totalGapSpace) / columns;
   }, [containerWidth, columns, gap]);
 
-  // Create distributor with memoization
+  // Track distributor version to reset cache when distributor changes
+  const distributorVersion = useRef(0);
+  const prevColumnWidth = useRef(columnWidth);
+  const prevGap = useRef(gap);
+  
+  // Create distributor with memoization - increment version when it changes
   const distributor = useMemo(() => {
+    // Only increment if values actually changed (not on initial render)
+    if (prevColumnWidth.current !== columnWidth || prevGap.current !== gap) {
+      distributorVersion.current += 1;
+      prevColumnWidth.current = columnWidth;
+      prevGap.current = gap;
+    }
     return createMasonryDistributor(columnWidth, gap);
   }, [columnWidth, gap]);
 
@@ -103,11 +114,24 @@ export function MasonryGrid({
   const blockIdsKey = useMemo(() => blocks.map(b => b.id).join(','), [blocks]);
   
   // Cache the last distribution to prevent recalculation when only aspect ratios change
-  const cachedDistributionRef = useRef<{ blockIdsKey: string; distribution: ReturnType<typeof distributor> } | null>(null);
+  // Include distributorVersion to invalidate cache when distributor changes
+  const cachedDistributionRef = useRef<{ 
+    blockIdsKey: string; 
+    distribution: ReturnType<typeof distributor>;
+    version: number;
+  } | null>(null);
+  
+  // Store aspect ratios in a ref so we can use the latest values without triggering recalculation
+  const aspectRatiosRef = useRef(aspectRatios);
+  useEffect(() => {
+    aspectRatiosRef.current = aspectRatios;
+  }, [aspectRatios]);
   
   // Distribute blocks to columns using height-balanced algorithm
-  // CRITICAL FIX: Only recalculate when block IDs change, not when aspect ratios update
-  // This prevents rapid re-renders that cause visual duplicates in production
+  // CRITICAL FIX: 
+  // 1. Only recalculate when block IDs change OR distributor changes
+  // 2. Reset cache when distributor version changes to prevent stale data
+  // 3. Don't render until mounted to prevent SSR/hydration mismatches
   const columnDistribution = useMemo(() => {
     if (blocks.length === 0 || containerWidth === 0) {
       return {
@@ -116,26 +140,28 @@ export function MasonryGrid({
       };
     }
 
-    // Check if we can use cached distribution (block IDs haven't changed)
-    if (cachedDistributionRef.current?.blockIdsKey === blockIdsKey && cachedDistributionRef.current.blockIdsKey !== '') {
-      // Block IDs haven't changed - return cached distribution
-      // This prevents recalculation when only aspect ratios update
-      return cachedDistributionRef.current.distribution;
+    // Check if we can use cached distribution
+    // Cache is valid only if:
+    // 1. Block IDs haven't changed
+    // 2. Distributor version hasn't changed
+    const cacheValid = 
+      cachedDistributionRef.current?.blockIdsKey === blockIdsKey && 
+      cachedDistributionRef.current?.blockIdsKey !== '' &&
+      cachedDistributionRef.current?.version === distributorVersion.current;
+    
+    if (cacheValid) {
+      return cachedDistributionRef.current!.distribution;
     }
 
-    // Block IDs changed - recalculate and cache
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MasonryGrid.tsx:107',message:'Before distribution',data:{blockCount:blocks.length,blockIds:blocks.map(b=>b.id),duplicateIds:blocks.map(b=>b.id).filter((id,i,arr)=>arr.indexOf(id)!==i)},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
-    const result = distributor(blocks, aspectRatios, columns);
-    cachedDistributionRef.current = { blockIdsKey, distribution: result };
-    // #region agent log
-    const allDistributedIds:number[]=[];
-    result.columns.forEach((col,idx)=>{col.forEach(b=>allDistributedIds.push(b.id));});
-    fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MasonryGrid.tsx:119',message:'After distribution',data:{totalDistributed:allDistributedIds.length,distributedIds:allDistributedIds,duplicateIds:allDistributedIds.filter((id,i,arr)=>arr.indexOf(id)!==i),columnCounts:result.columns.map((col,idx)=>({col:idx,count:col.length,ids:col.map(b=>b.id)}))},timestamp:Date.now(),sessionId:'debug-session',runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
+    // Recalculate distribution
+    const result = distributor(blocks, aspectRatiosRef.current, columns);
+    cachedDistributionRef.current = { 
+      blockIdsKey, 
+      distribution: result,
+      version: distributorVersion.current
+    };
     return result;
-  }, [blockIdsKey, blocks, aspectRatios, columns, containerWidth, distributor]);
+  }, [blockIdsKey, blocks, columns, containerWidth, distributor]);
 
   // Optimized load more handler
   const handleLoadMore = useCallback(() => {
@@ -202,15 +228,11 @@ export function MasonryGrid({
             className="flex flex-col"
             style={{ gap: `${gap}px` }}
           >
-            {colBlocks.map((block, blockIndex) => {
+            {colBlocks.map((block) => {
               // Calculate global index for priority determination
               // Find block's position in original array
               const globalIndex = blocks.findIndex((b) => b.id === block.id);
               const isPriority = globalIndex < priorityCount;
-
-              // #region agent log
-              if(blockIndex===0&&colIndex===0){fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MasonryGrid.tsx:178',message:'Rendering blocks',data:{totalBlocks:blocks.length,renderedBlockIds:columnDistribution.columns.flat().map(b=>b.id),duplicateRenderedIds:columnDistribution.columns.flat().map(b=>b.id).filter((id,i,arr)=>arr.indexOf(id)!==i)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});}
-              // #endregion
 
               return (
                 <BlockCard

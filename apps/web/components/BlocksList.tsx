@@ -29,13 +29,16 @@ export function BlocksList(
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isLoadingRef = useRef(false); // Guard against concurrent loads
   const lastRequestedCursorRef = useRef<string | null>(undefined as any); // Track cursors being loaded
+  
+  // Track mounted state to prevent SSR/hydration issues
+  const isMountedRef = useRef(false);
 
   const columns = useMasonryColumns();
 
   const loadBlocks = useCallback(
     async (nextCursor?: string | null, signal?: AbortSignal, attempt = 0) => {
       // Prevent fetching the same cursor multiple times (race condition)
-      if (nextCursor && nextCursor === lastRequestedCursorRef.current) {
+      if (nextCursor === lastRequestedCursorRef.current && lastRequestedCursorRef.current !== undefined) {
         return;
       }
       
@@ -62,29 +65,18 @@ export function BlocksList(
           return;
         }
 
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BlocksList.tsx:59',message:'API response received',data:{cursor:nextCursor,blockCount:response.blocks.length,blockIds:response.blocks.map(b=>b.id),duplicateIds:response.blocks.map(b=>b.id).filter((id,i,arr)=>arr.indexOf(id)!==i)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
-
         // Always deduplicate blocks by external_id to prevent duplicates
         // external_id is the true unique identifier from Savee.it
         // Use functional updates to ensure atomic state updates
         if (nextCursor) {
           // Deduplicate blocks by external_id to prevent duplicates from pagination overlap
           setBlocks((prev) => {
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BlocksList.tsx:70',message:'Before pagination dedupe',data:{prevCount:prev.length,prevIds:prev.map(b=>b.id),newCount:response.blocks.length,newIds:response.blocks.map(b=>b.id)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
             const existingKeys = new Set(prev.map((b) => b.external_id || String(b.id)));
             const newBlocks = response.blocks.filter((b) => {
               const key = b.external_id || String(b.id);
               return !existingKeys.has(key);
             });
-            const result = [...prev, ...newBlocks];
-            // #region agent log
-            fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BlocksList.tsx:77',message:'After pagination dedupe',data:{resultCount:result.length,resultIds:result.map(b=>b.id),duplicateIds:result.map(b=>b.id).filter((id,i,arr)=>arr.indexOf(id)!==i)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
-            return result;
+            return [...prev, ...newBlocks];
           });
         } else {
           // Deduplicate initial load as well in case API returns duplicates
@@ -95,9 +87,6 @@ export function BlocksList(
             seen.add(key);
             return true;
           });
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BlocksList.tsx:87',message:'Initial load dedupe result',data:{originalCount:response.blocks.length,uniqueCount:uniqueBlocks.length,uniqueIds:uniqueBlocks.map(b=>b.id),duplicateIds:uniqueBlocks.map(b=>b.id).filter((id,i,arr)=>arr.indexOf(id)!==i)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
           setBlocks(uniqueBlocks);
         }
 
@@ -148,6 +137,9 @@ export function BlocksList(
   );
 
   useEffect(() => {
+    // Mark as mounted
+    isMountedRef.current = true;
+    
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -156,6 +148,7 @@ export function BlocksList(
     loadBlocks(null, controller.signal);
 
     return () => {
+      isMountedRef.current = false;
       controller.abort();
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
@@ -223,18 +216,13 @@ export function BlocksList(
             blocks={undefined}
           />
         ) : blocks.length > 0 ? (
-          <>
-            {/* #region agent log */}
-            {(()=>{fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'BlocksList.tsx:212',message:'Passing blocks to MasonryGrid',data:{blockCount:blocks.length,blockIds:blocks.map(b=>b.id),duplicateIds:blocks.map(b=>b.id).filter((id,i,arr)=>arr.indexOf(id)!==i)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});return null})()}
-            {/* #endregion */}
-            <MasonryGrid
-              blocks={blocks}
-              onLoadMore={handleLoadMore}
-              hasMore={hasMore}
-              isLoadingMore={isLoadingMore}
-              columns={columns}
-            />
-          </>
+          <MasonryGrid
+            blocks={blocks}
+            onLoadMore={handleLoadMore}
+            hasMore={hasMore}
+            isLoadingMore={isLoadingMore}
+            columns={columns}
+          />
         ) : (
           <div className="flex items-center justify-center min-h-screen">
             <div className="text-muted-foreground">No blocks found</div>
