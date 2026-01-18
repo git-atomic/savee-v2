@@ -27,25 +27,41 @@ export function BlocksList(
   const [retryCount, setRetryCount] = useState(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isLoadingRef = useRef(false); // Guard against concurrent loads
 
   const columns = useMasonryColumns();
 
   const loadBlocks = useCallback(
     async (nextCursor?: string | null, signal?: AbortSignal, attempt = 0) => {
+      // Prevent concurrent loads (race condition guard)
+      if (isLoadingRef.current && !nextCursor) {
+        return; // Initial load already in progress
+      }
+      
       try {
+        isLoadingRef.current = true;
+        
         if (!nextCursor) {
           setIsLoading(true);
           setBlocks([]);
         } else {
+          // Prevent concurrent pagination loads
+          if (isLoadingMore) {
+            return;
+          }
           setIsLoadingMore(true);
         }
         setError(null);
 
         const response = await fetchBlocks(nextCursor || null, 50, origin);
 
-        if (signal?.aborted) return;
+        if (signal?.aborted) {
+          isLoadingRef.current = false;
+          return;
+        }
 
         // Always deduplicate blocks by ID to prevent duplicates
+        // Use functional updates to ensure atomic state updates
         if (nextCursor) {
           // Deduplicate blocks by ID to prevent duplicates from pagination overlap
           setBlocks((prev) => {
@@ -92,13 +108,14 @@ export function BlocksList(
           setHasMore(false);
         }
       } finally {
+        isLoadingRef.current = false;
         if (!signal?.aborted) {
           setIsLoading(false);
           setIsLoadingMore(false);
         }
       }
     },
-    [origin]
+    [origin, isLoadingMore]
   );
 
   useEffect(() => {

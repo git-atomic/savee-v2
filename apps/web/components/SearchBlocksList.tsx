@@ -39,6 +39,7 @@ export function SearchBlocksList() {
   const [retryCount, setRetryCount] = useState(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isLoadingRef = useRef(false); // Guard against concurrent loads
 
   const columns = useMasonryColumns();
 
@@ -58,12 +59,24 @@ export function SearchBlocksList() {
         return;
       }
 
+      // Prevent concurrent loads (race condition guard)
+      if (isLoadingRef.current && !nextCursor) {
+        return; // Initial load already in progress
+      }
+      
       try {
+        isLoadingRef.current = true;
+        
         if (!signal?.aborted) {
           if (!nextCursor) {
             setIsLoading(true);
             setBlocks([]);
           } else {
+            // Prevent concurrent pagination loads
+            if (isLoadingMore) {
+              isLoadingRef.current = false;
+              return;
+            }
             setIsLoadingMore(true);
           }
           setError(null);
@@ -137,6 +150,7 @@ export function SearchBlocksList() {
           setHasMore(false);
         }
       } finally {
+        isLoadingRef.current = false;
         // Only update loading state if not aborted
         if (!signal?.aborted) {
           setIsLoading(false);
@@ -144,7 +158,7 @@ export function SearchBlocksList() {
         }
       }
     },
-    []
+    [isLoadingMore]
   );
 
   useEffect(() => {

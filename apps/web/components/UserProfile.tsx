@@ -41,6 +41,7 @@ export function UserProfile({ username }: UserProfileProps) {
   const [retryCount, setRetryCount] = useState(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isLoadingRef = useRef(false); // Guard against concurrent loads
 
   const columns = useMasonryColumns();
 
@@ -97,11 +98,22 @@ export function UserProfile({ username }: UserProfileProps) {
   // Load blocks
   const loadBlocks = useCallback(
     async (nextCursor?: string | null, signal?: AbortSignal, attempt = 0) => {
+      // Prevent concurrent loads (race condition guard)
+      if (isLoadingRef.current && !nextCursor) {
+        return; // Initial load already in progress
+      }
+      
       try {
+        isLoadingRef.current = true;
+        
         if (!nextCursor) {
           setIsLoading(true);
           setBlocks([]);
         } else {
+          // Prevent concurrent pagination loads
+          if (isLoadingMore) {
+            return;
+          }
           setIsLoadingMore(true);
         }
         setError(null);
@@ -162,13 +174,14 @@ export function UserProfile({ username }: UserProfileProps) {
           setHasMore(false);
         }
       } finally {
+        isLoadingRef.current = false;
         if (!signal?.aborted) {
           setIsLoading(false);
           setIsLoadingMore(false);
         }
       }
     },
-    [username]
+    [username, isLoadingMore]
   );
 
   useEffect(() => {

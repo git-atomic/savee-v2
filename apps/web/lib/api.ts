@@ -31,14 +31,13 @@ export async function fetchBlocks(
     params.set("origin", origin);
   }
 
+  // Disable client-side cache to prevent stale duplicate data in production
+  // The Next.js API route already handles caching with proper headers
   const cacheKey = `blocks-${cursor || "initial"}-${limit}-${origin || "all"}`;
   const cached = cache.get(cacheKey);
 
-  // Return cached data if still valid
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.data;
-  }
-
+  // Only use cache on error fallback, not for normal requests
+  // This prevents stale data with duplicates from being returned
   try {
     const response = await fetch(`/api/blocks?${params.toString()}`, {
       signal,
@@ -53,12 +52,18 @@ export async function fetchBlocks(
 
     const data = (await response.json()) as BlocksResponse;
 
-    // Cache the response
-    cache.set(cacheKey, { data, timestamp: Date.now() });
+    // Deduplicate blocks before caching to prevent cache pollution
+    const uniqueBlocks = data.blocks.filter(
+      (block, index, self) => index === self.findIndex((b) => b.id === block.id)
+    );
+    const deduplicatedData = { ...data, blocks: uniqueBlocks };
 
-    return data;
+    // Update cache with deduplicated data
+    cache.set(cacheKey, { data: deduplicatedData, timestamp: Date.now() });
+
+    return deduplicatedData;
   } catch (error) {
-    // Return cached data on error if available
+    // Return cached data on error if available (as fallback only)
     if (cached) {
       return cached.data;
     }
