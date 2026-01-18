@@ -23,7 +23,7 @@ export function useDominantColor(imageSrc: string | null) {
       try {
         const avgColor = fac.getColor(img);
         // Make the color slightly darker for better skeleton appearance
-        const { r, g, b } = avgColor.value;
+        const [r, g, b] = avgColor.value;
         const darkerColor = `rgb(${Math.floor(r * 0.3)}, ${Math.floor(g * 0.3)}, ${Math.floor(b * 0.3)})`;
         setColor(darkerColor);
       } catch (error) {
