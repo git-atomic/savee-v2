@@ -1,9 +1,11 @@
 [build]
-  command = "pnpm install && pnpm run build"
+  command = "corepack enable && corepack prepare pnpm@latest --activate && pnpm install && pnpm run build"
   publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"
+  SECRETS_SCAN_ENABLED = "false"
+  SECRETS_SCAN_OMIT_KEYS = "NODE_ENV,STOP_ON_FIRST_OLD,DB_SCHEMA,R2_REGION,MIN_NEW_BEFORE_BREAK,MONITOR_MAX_INTERVAL_SECONDS,MONITOR_MAX_PARALLEL,MONITOR_MIN_INTERVAL_SECONDS,ONLY_OLD_EXIT_STREAK,PROBE_MIN_ITEMS,CORS_ORIGINS,R2_BUCKET_NAME,R2_ENDPOINT_URL"
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
