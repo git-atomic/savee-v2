@@ -1,9 +1,5 @@
 import type { Block, BlocksResponse } from "@/types/block";
 
-// Cache for API responses (simple in-memory cache)
-const cache = new Map<string, { data: BlocksResponse; timestamp: number }>();
-const CACHE_TTL = 30000; // 30 seconds
-
 // Public CMS URL for client-side calls (baked at build time)
 const CMS_PUBLIC_URL =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_CMS_URL) ||
@@ -31,18 +27,17 @@ export async function fetchBlocks(
     params.set("origin", origin);
   }
 
-  // Disable client-side cache to prevent stale duplicate data in production
-  // The Next.js API route already handles caching with proper headers
-  const cacheKey = `blocks-${cursor || "initial"}-${limit}-${origin || "all"}`;
-  const cached = cache.get(cacheKey);
+  // Add cache-busting timestamp to prevent any CDN/proxy/browser caching
+  params.set("_t", Date.now().toString());
 
-  // Only use cache on error fallback, not for normal requests
-  // This prevents stale data with duplicates from being returned
   try {
     const response = await fetch(`/api/blocks?${params.toString()}`, {
       signal,
+      // Force no caching at all levels
+      cache: "no-store",
       headers: {
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
       },
     });
 
@@ -52,21 +47,20 @@ export async function fetchBlocks(
 
     const data = (await response.json()) as BlocksResponse;
 
-    // Deduplicate blocks before caching to prevent cache pollution
-    const uniqueBlocks = data.blocks.filter(
-      (block, index, self) => index === self.findIndex((b) => b.id === block.id)
-    );
-    const deduplicatedData = { ...data, blocks: uniqueBlocks };
+    // Deduplicate blocks by external_id (the true unique identifier from Savee)
+    // This handles any edge cases where the API returns duplicates
+    const seen = new Set<string>();
+    const uniqueBlocks = data.blocks.filter((block) => {
+      const key = block.external_id || String(block.id);
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
 
-    // Update cache with deduplicated data
-    cache.set(cacheKey, { data: deduplicatedData, timestamp: Date.now() });
-
-    return deduplicatedData;
+    return { ...data, blocks: uniqueBlocks };
   } catch (error) {
-    // Return cached data on error if available (as fallback only)
-    if (cached) {
-      return cached.data;
-    }
     throw error;
   }
 }

@@ -55,21 +55,25 @@ export function BlocksList(
           return;
         }
 
-        // Always deduplicate blocks by ID to prevent duplicates
+        // Always deduplicate blocks by external_id to prevent duplicates
+        // external_id is the true unique identifier from Savee.it
         // Use functional updates to ensure atomic state updates
         if (nextCursor) {
-          // Deduplicate blocks by ID to prevent duplicates from pagination overlap
+          // Deduplicate blocks by external_id to prevent duplicates from pagination overlap
           setBlocks((prev) => {
-            // Normalize IDs to string for robust comparison
-            const existingIds = new Set(prev.map((b) => String(b.id)));
-            const newBlocks = response.blocks.filter((b) => !existingIds.has(String(b.id)));
+            const existingKeys = new Set(prev.map((b) => b.external_id || String(b.id)));
+            const newBlocks = response.blocks.filter((b) => !existingKeys.has(b.external_id || String(b.id)));
             return [...prev, ...newBlocks];
           });
         } else {
           // Deduplicate initial load as well in case API returns duplicates
-          const uniqueBlocks = response.blocks.filter(
-            (block, index, self) => index === self.findIndex((b) => String(b.id) === String(block.id))
-          );
+          const seen = new Set<string>();
+          const uniqueBlocks = response.blocks.filter((block) => {
+            const key = block.external_id || String(block.id);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
           setBlocks(uniqueBlocks);
         }
 

@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// Force dynamic rendering - prevent Next.js from caching this route
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // Server-side CMS base URL. This should always be the Payload CMS origin,
 // not the frontend, so we only use CMS_URL here.
 const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
-const CACHE_MAX_AGE = 30; // 30 seconds
 
 export async function GET(req: NextRequest) {
   try {
@@ -27,6 +30,8 @@ export async function GET(req: NextRequest) {
           headers: {
             Accept: "application/json",
           },
+          // Disable Next.js fetch caching
+          cache: "no-store",
         }
       );
 
@@ -42,7 +47,9 @@ export async function GET(req: NextRequest) {
           {
             status: response.status,
             headers: {
-              "Cache-Control": "no-store",
+              "Cache-Control": "private, no-cache, no-store, must-revalidate",
+              Pragma: "no-cache",
+              Expires: "0",
             },
           }
         );
@@ -50,9 +57,12 @@ export async function GET(req: NextRequest) {
 
       const data = await response.json();
 
+      // NO CACHING - prevents duplicate blocks from stale edge responses
       return NextResponse.json(data, {
         headers: {
-          "Cache-Control": `public, s-maxage=${CACHE_MAX_AGE}, stale-while-revalidate=60`,
+          "Cache-Control": "private, no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+          Expires: "0",
         },
       });
     } catch (fetchError) {
