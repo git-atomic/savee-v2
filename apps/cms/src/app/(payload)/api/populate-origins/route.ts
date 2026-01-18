@@ -39,10 +39,6 @@ export async function POST(_req: NextRequest) {
     let insertedCount = 0;
     let processed = 0;
 
-    console.log(
-      `Processing ${blocksRes.rows.length} blocks for multi-origin relations...`
-    );
-
     // For demonstration, let's simulate that:
     // - All blocks appear in home
     // - 30% appear in pop
@@ -91,12 +87,6 @@ export async function POST(_req: NextRequest) {
         }
 
         insertedCount++;
-
-        if (processed % 50 === 0) {
-          console.log(
-            `Processed ${processed}/${blocksRes.rows.length} blocks...`
-          );
-        }
       } catch (err) {
         console.error(`Error processing block ${block.external_id}:`, err);
       }

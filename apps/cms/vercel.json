@@ -1,0 +1,19 @@
+{
+  "buildCommand": "cd apps/cms && npm run build",
+  "outputDirectory": "apps/cms/.next",
+  "framework": "nextjs",
+  "installCommand": "cd apps/cms && npm install",
+  "devCommand": "cd apps/cms && npm run dev",
+  "regions": ["iad1"],
+  "env": {
+    "NODE_ENV": "production"
+  },
+  "functions": {
+    "apps/cms/src/app/**/*.ts": {
+      "maxDuration": 30
+    },
+    "apps/cms/src/app/**/*.tsx": {
+      "maxDuration": 30
+    }
+  }
+}

@@ -48,7 +48,7 @@ export default function SaveeUserAvatarCell({ rowData }: Props) {
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(() => {
     const r2 = rowData?.avatar_r2_key || rowData?.avatarR2Key;
     if (r2 && typeof r2 === "string") {
-      // Use proxy to keep domain, mirror if missing
+      // Use proxy mode so admin avatar previews always work, even if R2 CORS is strict
       return `/api/r2/presign?mode=proxy&key=${encodeURIComponent(r2)}`;
     }
 
@@ -97,7 +97,8 @@ export default function SaveeUserAvatarCell({ rowData }: Props) {
             );
             return;
           }
-          const src = avatar?.src || doc?.profile_image_url || doc?.profileImageUrl;
+          const src =
+            avatar?.src || doc?.profile_image_url || doc?.profileImageUrl;
           if (typeof src === "string" && src.length > 0) {
             setAvatarUrl(src);
           }

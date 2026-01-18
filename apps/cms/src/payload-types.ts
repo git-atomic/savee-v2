@@ -158,7 +158,7 @@ export interface Source {
    * Full URL to scrape content from
    */
   url: string;
-  sourceType: 'home' | 'pop' | 'user';
+  sourceType: 'home' | 'pop' | 'user' | 'blocks';
   /**
    * Username for user profile sources
    */

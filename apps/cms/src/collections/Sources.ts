@@ -34,6 +34,7 @@ export const Sources: CollectionConfig = {
         { label: "Home Feed", value: "home" },
         { label: "Popular Content", value: "pop" },
         { label: "User Profile", value: "user" },
+        { label: "Blocks (Bulk Import)", value: "blocks" },
       ],
     },
     {

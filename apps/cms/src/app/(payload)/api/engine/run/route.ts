@@ -169,7 +169,6 @@ export async function POST(request: NextRequest) {
           process.env.GITHUB_ACTIONS_TOKEN || process.env.GITHUB_DISPATCH_TOKEN;
         const repo = process.env.GITHUB_REPO; // owner/repo
         const ref = process.env.GITHUB_REF || "main";
-        console.log(`[add_job] token=${!!token}, repo=${repo}, ref=${ref}`);
         if (token && repo) {
           // 1) repository_dispatch
           try {
@@ -194,7 +193,7 @@ export async function POST(request: NextRequest) {
             });
             dispatched ||= resp.ok;
           } catch (e) {
-            console.log(`[add_job] repository_dispatch error: ${e}`);
+            // Silently handle errors
           }
           // 2) workflow_dispatch monitor.yml
           if (!dispatched) {
@@ -220,9 +219,7 @@ export async function POST(request: NextRequest) {
               });
               dispatched ||= resp2.ok;
             } catch (e) {
-              console.log(
-                `[add_job] workflow_dispatch monitor.yml error: ${e}`
-              );
+              // Silently handle errors
             }
           }
           // 3) workflow_dispatch manual-monitor.yml
@@ -249,14 +246,12 @@ export async function POST(request: NextRequest) {
               });
               dispatched ||= resp3.ok;
             } catch (e) {
-              console.log(
-                `[add_job] workflow_dispatch manual-monitor.yml error: ${e}`
-              );
+              // Silently handle errors
             }
           }
         }
       } catch (e) {
-        console.log(`[add_job] dispatch error: ${e}`);
+        // Silently handle errors
       }
       return NextResponse.json({
         success: true,
@@ -282,7 +277,6 @@ export async function POST(request: NextRequest) {
 
     // Start worker process (inline mode)
     const workerPath = path.resolve(process.cwd(), "../worker");
-    console.log(`🚀 Starting worker for run ${runId} with URL: ${url}`);
 
     try {
       const pythonProcess = spawn(
@@ -308,17 +302,13 @@ export async function POST(request: NextRequest) {
         }
       );
 
-      // Log worker output
-      pythonProcess.stdout?.on("data", (data) => {
-        console.log(`Worker stdout: ${data}`);
-      });
+      // Worker output is handled by log streaming
 
       pythonProcess.stderr?.on("data", (data) => {
         console.error(`Worker stderr: ${data}`);
       });
 
       pythonProcess.on("close", async (code) => {
-        console.log(`Worker process exited with code ${code}`);
         try {
           await payload.update({
             collection: "runs",
@@ -332,13 +322,12 @@ export async function POST(request: NextRequest) {
             },
           });
         } catch (error) {
-          console.error("Failed to update run status:", error);
+          // Silently handle errors
         }
       });
 
       // Run is already marked running above
     } catch (error) {
-      console.error("Failed to start worker:", error);
       try {
         await payload.update({
           collection: "runs",
