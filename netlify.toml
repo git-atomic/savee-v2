@@ -2,7 +2,7 @@
   # Build the Next.js web app
   base = "apps/web"
   command = "npm install && npm run build"
-  publish = ".next"
+  # Publish directory is handled automatically by @netlify/plugin-nextjs
 
 [build.environment]
   NODE_VERSION = "20"
@@ -10,7 +10,10 @@
 # Next.js configuration - Netlify will auto-detect Next.js
 # The @netlify/plugin-nextjs is automatically installed
 
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
 # Environment variables (set these in Netlify dashboard)
 # DATABASE_URL - Your database connection string
-# CMS_URL - Your CMS API URL (if separate)
-# NEXT_PUBLIC_CMS_URL - Public CMS URL for client-side calls
+# CMS_URL - Your CMS API URL (e.g., https://flowcms.netlify.app)
+# NEXT_PUBLIC_CMS_URL - Public CMS URL for client-side calls (e.g., https://flowcms.netlify.app)

@@ -25,13 +25,15 @@ export async function GET(req: NextRequest) {
     const jsonResponse = await fetch(presignUrl);
 
     if (!jsonResponse.ok) {
+      // Return the actual status code from CMS to help debug 404s
       return NextResponse.json(
         {
           success: false,
-          error: "Failed to get presigned URL",
+          error: `Failed to get presigned URL from CMS: ${jsonResponse.status} ${jsonResponse.statusText}`,
+          cmsUrl: presignUrl,
           status: jsonResponse.status,
         },
-        { status: 500 }
+        { status: jsonResponse.status === 404 ? 404 : 502 }
       );
     }
 
