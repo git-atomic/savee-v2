@@ -13,6 +13,16 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
+# Disable all caching for API routes to prevent edge-cached duplicates
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "private, no-cache, no-store, must-revalidate, max-age=0"
+    Pragma = "no-cache"
+    Expires = "0"
+    CDN-Cache-Control = "no-store"
+    Netlify-CDN-Cache-Control = "no-store"
+
 # Environment variables (set these in Netlify dashboard)
 # DATABASE_URL - Your database connection string
 # CMS_URL - Your CMS API URL (e.g., https://flowcms.netlify.app)

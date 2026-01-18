@@ -92,19 +92,27 @@ export function SearchBlocksList() {
         // Check if aborted before updating state
         if (signal?.aborted) return;
 
-        // Always deduplicate blocks by ID to prevent duplicates
+        // Always deduplicate blocks by external_id to prevent duplicates
+        // external_id is the true unique identifier from Savee.it
         if (nextCursor) {
-          // Deduplicate blocks by ID to prevent duplicates from pagination overlap
+          // Deduplicate blocks by external_id to prevent duplicates from pagination overlap
           setBlocks((prev) => {
-            const existingIds = new Set(prev.map((b) => b.id));
-            const newBlocks = response.blocks.filter((b) => !existingIds.has(b.id));
+            const existingKeys = new Set(prev.map((b) => b.external_id || String(b.id)));
+            const newBlocks = response.blocks.filter((b) => {
+              const key = b.external_id || String(b.id);
+              return !existingKeys.has(key);
+            });
             return [...prev, ...newBlocks];
           });
         } else {
           // Deduplicate initial load as well in case API returns duplicates
-          const uniqueBlocks = response.blocks.filter(
-            (block, index, self) => index === self.findIndex((b) => b.id === block.id)
-          );
+          const seen = new Set<string>();
+          const uniqueBlocks = response.blocks.filter((block) => {
+            const key = block.external_id || String(block.id);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
           setBlocks(uniqueBlocks);
         }
 
