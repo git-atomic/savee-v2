@@ -28,18 +28,25 @@ export function BlocksList(
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isLoadingRef = useRef(false); // Guard against concurrent loads
+  const lastRequestedCursorRef = useRef<string | null>(undefined as any); // Track cursors being loaded
 
   const columns = useMasonryColumns();
 
   const loadBlocks = useCallback(
     async (nextCursor?: string | null, signal?: AbortSignal, attempt = 0) => {
-      // Prevent concurrent loads (race condition guard) using the ref
+      // Prevent fetching the same cursor multiple times (race condition)
+      if (nextCursor && nextCursor === lastRequestedCursorRef.current) {
+        return;
+      }
+      
+      // Prevent concurrent loads
       if (isLoadingRef.current) {
         return;
       }
       
       try {
         isLoadingRef.current = true;
+        lastRequestedCursorRef.current = nextCursor || null;
         
         if (!nextCursor) {
           setIsLoading(true);
@@ -62,7 +69,10 @@ export function BlocksList(
           // Deduplicate blocks by external_id to prevent duplicates from pagination overlap
           setBlocks((prev) => {
             const existingKeys = new Set(prev.map((b) => b.external_id || String(b.id)));
-            const newBlocks = response.blocks.filter((b) => !existingKeys.has(b.external_id || String(b.id)));
+            const newBlocks = response.blocks.filter((b) => {
+              const key = b.external_id || String(b.id);
+              return !existingKeys.has(key);
+            });
             return [...prev, ...newBlocks];
           });
         } else {
@@ -86,6 +96,9 @@ export function BlocksList(
           (err instanceof Error && err.name === "AbortError")
         )
           return;
+
+        // Reset the last requested cursor on error so we can retry
+        lastRequestedCursorRef.current = undefined as any;
 
         const errorMessage =
           err instanceof Error ? err.message : "Failed to load blocks";
@@ -124,6 +137,8 @@ export function BlocksList(
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
+    // Reset cursor tracking when origin changes
+    lastRequestedCursorRef.current = undefined as any;
     loadBlocks(null, controller.signal);
 
     return () => {
@@ -135,8 +150,8 @@ export function BlocksList(
   }, [loadBlocks]); // Now stable, will only run once or when origin changes
 
   const handleLoadMore = useCallback(() => {
-    // Only proceed if not already loading anything
-    if (!isLoadingRef.current && hasMore && cursor) {
+    // Only proceed if not already loading and we have a valid cursor that isn't already being loaded
+    if (!isLoadingRef.current && hasMore && cursor && cursor !== lastRequestedCursorRef.current) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
       loadBlocks(cursor, controller.signal);

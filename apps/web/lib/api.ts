@@ -318,19 +318,16 @@ export async function fetchBlocksByUsername(
     params.set("cursor", cursor);
   }
 
-  const cacheKey = `blocks-user-${username}-${cursor || "initial"}-${limit}`;
-  const cached = cache.get(cacheKey);
-
-  // Return cached data if still valid
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-    return cached.data;
-  }
+  // Add cache-busting timestamp
+  params.set("_t", Date.now().toString());
 
   try {
     const response = await fetch(`/api/blocks?${params.toString()}`, {
       signal,
+      cache: "no-store",
       headers: {
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Pragma: "no-cache",
       },
     });
 
@@ -339,16 +336,8 @@ export async function fetchBlocksByUsername(
     }
 
     const data = (await response.json()) as BlocksResponse;
-
-    // Cache the response
-    cache.set(cacheKey, { data, timestamp: Date.now() });
-
     return data;
   } catch (error) {
-    // Return cached data on error if available
-    if (cached) {
-      return cached.data;
-    }
     throw error;
   }
 }
