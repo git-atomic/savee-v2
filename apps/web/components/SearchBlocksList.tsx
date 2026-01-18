@@ -95,22 +95,31 @@ export function SearchBlocksList() {
         // Always deduplicate blocks by external_id to prevent duplicates
         // external_id is the true unique identifier from Savee.it
         if (nextCursor) {
-          // Deduplicate blocks by external_id to prevent duplicates from pagination overlap
+          // Deduplicate blocks by external_id and media fingerprint to prevent duplicates from pagination overlap
           setBlocks((prev) => {
-            const existingKeys = new Set(prev.map((b) => b.external_id || String(b.id)));
+            const existingExternal = new Set(prev.filter(b => b.external_id).map(b => b.external_id));
+            const existingMedia = new Set(prev.map(b => b.r2_key || b.video_url || b.image_url).filter(Boolean));
+            
             const newBlocks = response.blocks.filter((b) => {
-              const key = b.external_id || String(b.id);
-              return !existingKeys.has(key);
+              if (b.external_id && existingExternal.has(b.external_id)) return false;
+              const media = b.r2_key || b.video_url || b.image_url;
+              if (media && existingMedia.has(media as string)) return false;
+              return true;
             });
             return [...prev, ...newBlocks];
           });
         } else {
-          // Deduplicate initial load as well in case API returns duplicates
-          const seen = new Set<string>();
+          // Aggressive deduplication for initial load
+          const seenExternal = new Set<string>();
+          const seenMedia = new Set<string>();
           const uniqueBlocks = response.blocks.filter((block) => {
-            const key = block.external_id || String(block.id);
-            if (seen.has(key)) return false;
-            seen.add(key);
+            if (block.external_id && seenExternal.has(block.external_id)) return false;
+            if (block.external_id) seenExternal.add(block.external_id);
+            
+            const media = block.r2_key || block.video_url || block.image_url;
+            if (media && seenMedia.has(media as string)) return false;
+            if (media) seenMedia.add(media as string);
+            
             return true;
           });
           setBlocks(uniqueBlocks);
