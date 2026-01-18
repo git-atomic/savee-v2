@@ -221,7 +221,14 @@ export async function GET(req: NextRequest) {
     console.log("Blocks API Params:", params);
 
     const result = await payload.db.pool.query(query, params);
-    const blocks = result.rows;
+    // Deduplicate blocks by ID as a final safeguard (in case DISTINCT ON doesn't work as expected)
+    const blocksMap = new Map();
+    result.rows.forEach((block: any) => {
+      if (!blocksMap.has(block.id)) {
+        blocksMap.set(block.id, block);
+      }
+    });
+    const blocks = Array.from(blocksMap.values());
 
     let nextCursor: string | null = null;
     if (blocks.length === limit) {

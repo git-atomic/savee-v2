@@ -45,6 +45,7 @@ export function BlocksList(
 
         if (signal?.aborted) return;
 
+        // Always deduplicate blocks by ID to prevent duplicates
         if (nextCursor) {
           // Deduplicate blocks by ID to prevent duplicates from pagination overlap
           setBlocks((prev) => {
@@ -53,7 +54,11 @@ export function BlocksList(
             return [...prev, ...newBlocks];
           });
         } else {
-          setBlocks(response.blocks);
+          // Deduplicate initial load as well in case API returns duplicates
+          const uniqueBlocks = response.blocks.filter(
+            (block, index, self) => index === self.findIndex((b) => b.id === block.id)
+          );
+          setBlocks(uniqueBlocks);
         }
 
         setCursor(response.nextCursor || null);
