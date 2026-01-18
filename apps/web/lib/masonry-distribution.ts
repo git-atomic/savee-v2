@@ -34,8 +34,18 @@ export function distributeBlocksToColumns(
     };
   }
 
+  // Deduplicate blocks by ID to prevent rendering duplicates
+  const seenIds = new Set<number>();
+  const uniqueBlocks = blocks.filter((block) => {
+    if (seenIds.has(block.id)) {
+      return false;
+    }
+    seenIds.add(block.id);
+    return true;
+  });
+
   // Calculate estimated heights for each block
-  const blocksWithHeights: BlockWithHeight[] = blocks.map((block) => {
+  const blocksWithHeights: BlockWithHeight[] = uniqueBlocks.map((block) => {
     const aspectRatio =
       aspectRatios.get(block.id) ?? getDeterministicAspectRatio(block.id);
     // Height = width / aspectRatio

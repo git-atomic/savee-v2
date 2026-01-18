@@ -46,7 +46,12 @@ export function BlocksList(
         if (signal?.aborted) return;
 
         if (nextCursor) {
-          setBlocks((prev) => [...prev, ...response.blocks]);
+          // Deduplicate blocks by ID to prevent duplicates from pagination overlap
+          setBlocks((prev) => {
+            const existingIds = new Set(prev.map((b) => b.id));
+            const newBlocks = response.blocks.filter((b) => !existingIds.has(b.id));
+            return [...prev, ...newBlocks];
+          });
         } else {
           setBlocks(response.blocks);
         }
@@ -88,7 +93,7 @@ export function BlocksList(
         }
       }
     },
-    []
+    [origin]
   );
 
   useEffect(() => {
