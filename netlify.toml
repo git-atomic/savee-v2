@@ -2,7 +2,7 @@
   # Build the Next.js web app
   base = "apps/web"
   command = "npm install && npm run build"
-  # Publish directory is handled automatically by @netlify/plugin-nextjs
+  publish = ".next"
 
 [build.environment]
   NODE_VERSION = "20"
