@@ -2,7 +2,7 @@ name: Engine Monitor
 
 on:
   schedule:
-    - cron: "*/2 * * * *" # every 2 minutes
+    - cron: "*/30 * * * *" # every 30 minutes (reduced from 2 min to stay within free tier)
   workflow_dispatch:
     inputs:
       sourceId:
