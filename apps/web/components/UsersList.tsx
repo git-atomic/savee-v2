@@ -32,7 +32,7 @@ export function UsersList() {
         }
         setError(null);
 
-        const response = await fetchUsers(nextCursor || null, 50, signal);
+        const response = await fetchUsers(nextCursor || null, 50, null, signal);
 
         if (signal?.aborted) return;
 
