@@ -36,13 +36,20 @@ export function distributeBlocksToColumns(
 
   // Deduplicate blocks by ID to prevent rendering duplicates
   const seenIds = new Set<number>();
+  const duplicateIds: number[] = [];
   const uniqueBlocks = blocks.filter((block) => {
     if (seenIds.has(block.id)) {
+      duplicateIds.push(block.id);
       return false;
     }
     seenIds.add(block.id);
     return true;
   });
+  // #region agent log
+  if (typeof window !== 'undefined' && duplicateIds.length > 0) {
+    fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'masonry-distribution.ts:45',message:'Duplicates found in distributor input',data:{inputCount:blocks.length,uniqueCount:uniqueBlocks.length,duplicateIds:duplicateIds},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+  }
+  // #endregion
 
   // Calculate estimated heights for each block
   const blocksWithHeights: BlockWithHeight[] = uniqueBlocks.map((block) => {

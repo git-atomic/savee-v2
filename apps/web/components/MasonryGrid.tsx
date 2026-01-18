@@ -107,7 +107,16 @@ export function MasonryGrid({
       };
     }
 
-    return distributor(blocks, aspectRatios, columns);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MasonryGrid.tsx:102',message:'Before distribution',data:{blockCount:blocks.length,blockIds:blocks.map(b=>b.id),duplicateIds:blocks.map(b=>b.id).filter((id,i,arr)=>arr.indexOf(id)!==i)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
+    const result = distributor(blocks, aspectRatios, columns);
+    // #region agent log
+    const allDistributedIds:number[]=[];
+    result.columns.forEach((col,idx)=>{col.forEach(b=>allDistributedIds.push(b.id));});
+    fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MasonryGrid.tsx:110',message:'After distribution',data:{totalDistributed:allDistributedIds.length,distributedIds:allDistributedIds,duplicateIds:allDistributedIds.filter((id,i,arr)=>arr.indexOf(id)!==i),columnCounts:result.columns.map((col,idx)=>({col:idx,count:col.length,ids:col.map(b=>b.id)}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
+    return result;
   }, [blocks, aspectRatios, columns, containerWidth, distributor]);
 
   // Optimized load more handler
@@ -180,6 +189,10 @@ export function MasonryGrid({
               // Find block's position in original array
               const globalIndex = blocks.findIndex((b) => b.id === block.id);
               const isPriority = globalIndex < priorityCount;
+
+              // #region agent log
+              if(blockIndex===0&&colIndex===0){fetch('http://127.0.0.1:7242/ingest/0bd1e67a-ac8e-48fc-8c1d-3171e04f078b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MasonryGrid.tsx:178',message:'Rendering blocks',data:{totalBlocks:blocks.length,renderedBlockIds:columnDistribution.columns.flat().map(b=>b.id),duplicateRenderedIds:columnDistribution.columns.flat().map(b=>b.id).filter((id,i,arr)=>arr.indexOf(id)!==i)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});}
+              // #endregion
 
               return (
                 <BlockCard
