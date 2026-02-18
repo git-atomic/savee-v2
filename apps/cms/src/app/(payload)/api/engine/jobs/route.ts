@@ -26,11 +26,6 @@ async function isAuthorized(req: NextRequest): Promise<boolean> {
   // For admin panel access, check Payload session
   try {
     const payload = await getPayload({ config });
-    const staleMinutes = Math.max(
-      5,
-      parseInt(process.env.RUN_STALE_MINUTES || "20", 10) || 20
-    );
-    const staleThresholdMs = staleMinutes * 60 * 1000;
     const { user } = await payload.auth({ headers: req.headers });
     return !!user; // Allow any authenticated admin user
   } catch {
@@ -78,6 +73,11 @@ export async function GET(request: NextRequest) {
         { status: 401 }
       );
     }
+    const staleMinutes = Math.max(
+      5,
+      parseInt(process.env.RUN_STALE_MINUTES || "20", 10) || 20
+    );
+    const staleThresholdMs = staleMinutes * 60 * 1000;
     const payload = await getPayload({ config });
 
     // Get sources with their latest runs - OPTIMIZED: batch fetch all runs at once
