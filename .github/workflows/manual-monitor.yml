@@ -17,11 +17,16 @@ jobs:
     runs-on: ubuntu-22.04
     concurrency:
       group: engine-monitor
-      cancel-in-progress: false
+      cancel-in-progress: true
     timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Show worker commit
+        run: |
+          echo "Workflow commit: $GITHUB_SHA"
+          git rev-parse --short HEAD
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -118,6 +123,7 @@ jobs:
           CMS_URL: ${{ secrets.CMS_URL }}
           ENGINE_MONITOR_TOKEN: ${{ secrets.ENGINE_MONITOR_TOKEN }}
           WORKER_PARALLELISM: ${{ secrets.WORKER_PARALLELISM }}
+          RESOLVE_SOURCE_URLS: "false"
         run: |
           cd apps/worker
           python scripts/run_pending_once.py

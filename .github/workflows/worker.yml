@@ -48,6 +48,7 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           COOKIES_PATH: ./savee_cookies.json
+          RESOLVE_SOURCE_URLS: "false"
         continue-on-error: true
         run: |
           # For manual trigger, use provided source_id
