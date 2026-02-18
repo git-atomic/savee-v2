@@ -4,6 +4,8 @@ import { dedupeBlocksByStableKey } from "@/lib/block-dedupe";
 // Force dynamic rendering - prevent Next.js from caching this route
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+const EDGE_CACHE_SECONDS = 20;
+const EDGE_STALE_SECONDS = 120;
 
 // Server-side CMS base URL. This should always be the Payload CMS origin,
 // not the frontend, so we only use CMS_URL here.
@@ -12,6 +14,16 @@ const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
+    const hasCursor = Boolean(searchParams.get("cursor"));
+    const hasSearch = Boolean(searchParams.get("q"));
+    const isUserFeed = Boolean(searchParams.get("username"));
+    const shouldUseEdgeCache = !hasCursor && !hasSearch && !isUserFeed;
+    const responseCacheControl = shouldUseEdgeCache
+      ? `public, s-maxage=${EDGE_CACHE_SECONDS}, stale-while-revalidate=${EDGE_STALE_SECONDS}`
+      : "private, no-cache, no-store, must-revalidate";
+    const upstreamCacheMode: RequestCache = shouldUseEdgeCache
+      ? "force-cache"
+      : "no-store";
 
     // Forward all query params to CMS
     const cmsParams = new URLSearchParams();
@@ -31,8 +43,10 @@ export async function GET(req: NextRequest) {
           headers: {
             Accept: "application/json",
           },
-          // Disable Next.js fetch caching
-          cache: "no-store",
+          cache: upstreamCacheMode,
+          next: shouldUseEdgeCache
+            ? { revalidate: EDGE_CACHE_SECONDS }
+            : { revalidate: 0 },
         }
       );
 
@@ -48,7 +62,7 @@ export async function GET(req: NextRequest) {
           {
             status: response.status,
             headers: {
-              "Cache-Control": "private, no-cache, no-store, must-revalidate",
+              "Cache-Control": responseCacheControl,
               Pragma: "no-cache",
               Expires: "0",
             },
@@ -73,7 +87,7 @@ export async function GET(req: NextRequest) {
       // NO CACHING - prevents duplicate blocks from stale edge responses
       return NextResponse.json(normalizedData, {
         headers: {
-          "Cache-Control": "private, no-cache, no-store, must-revalidate",
+          "Cache-Control": responseCacheControl,
           Pragma: "no-cache",
           Expires: "0",
         },

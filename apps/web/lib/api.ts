@@ -12,7 +12,7 @@ const CMS_BASE = CMS_PUBLIC_URL.replace(/\/+$/, "");
 // Use relative URL to call our own API route which proxies to CMS
 export async function fetchBlocks(
   cursor?: string | null,
-  limit: number = 50,
+  limit: number = 36,
   origin?: string | null,
   signal?: AbortSignal
 ): Promise<BlocksResponse> {
@@ -28,19 +28,8 @@ export async function fetchBlocks(
     params.set("origin", origin);
   }
 
-  // Add cache-busting timestamp to prevent any CDN/proxy/browser caching
-  params.set("_t", Date.now().toString());
-
   try {
-    const response = await fetch(`/api/blocks?${params.toString()}`, {
-      signal,
-      // Force no caching at all levels
-      cache: "no-store",
-      headers: {
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        Pragma: "no-cache",
-      },
-    });
+    const response = await fetch(`/api/blocks?${params.toString()}`, { signal });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch blocks: ${response.statusText}`);
@@ -222,7 +211,7 @@ export async function fetchUsers(
 export async function searchBlocks(
   q: string,
   cursor?: string | null,
-  limit: number = 50,
+  limit: number = 36,
   signal?: AbortSignal
 ): Promise<BlocksResponse> {
   const params = new URLSearchParams({
@@ -295,7 +284,7 @@ export async function fetchUserByUsername(
 export async function fetchBlocksByUsername(
   username: string,
   cursor?: string | null,
-  limit: number = 50,
+  limit: number = 36,
   signal?: AbortSignal
 ): Promise<BlocksResponse> {
   const params = new URLSearchParams({
@@ -308,18 +297,8 @@ export async function fetchBlocksByUsername(
     params.set("cursor", cursor);
   }
 
-  // Add cache-busting timestamp
-  params.set("_t", Date.now().toString());
-
   try {
-    const response = await fetch(`/api/blocks?${params.toString()}`, {
-      signal,
-      cache: "no-store",
-      headers: {
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        Pragma: "no-cache",
-      },
-    });
+    const response = await fetch(`/api/blocks?${params.toString()}`, { signal });
 
     if (!response.ok) {
       throw new Error(`Failed to fetch blocks: ${response.statusText}`);

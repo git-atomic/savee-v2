@@ -89,7 +89,7 @@ export function SearchBlocksList() {
         const response = await searchBlocks(
           searchQuery,
           nextCursor || null,
-          50,
+          36,
           signal
         );
 

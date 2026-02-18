@@ -112,6 +112,13 @@ export function MasonryGrid({
   // Stable block IDs string - only changes when block IDs actually change
   // This prevents unnecessary recalculations when blocks array reference changes but IDs are the same
   const blockIdsKey = useMemo(() => blocks.map(b => b.id).join(','), [blocks]);
+  const blockIndexMap = useMemo(() => {
+    const map = new Map<number, number>();
+    blocks.forEach((block, index) => {
+      map.set(block.id, index);
+    });
+    return map;
+  }, [blockIdsKey, blocks]);
   
   // Cache the last distribution to prevent recalculation when only aspect ratios change
   // Include distributorVersion to invalidate cache when distributor changes
@@ -230,8 +237,7 @@ export function MasonryGrid({
           >
             {colBlocks.map((block) => {
               // Calculate global index for priority determination
-              // Find block's position in original array
-              const globalIndex = blocks.findIndex((b) => b.id === block.id);
+              const globalIndex = blockIndexMap.get(block.id) ?? Number.MAX_SAFE_INTEGER;
               const isPriority = globalIndex < priorityCount;
 
               return (

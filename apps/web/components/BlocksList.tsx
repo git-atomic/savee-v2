@@ -63,7 +63,7 @@ export function BlocksList(
         }
         setError(null);
 
-        const response = await fetchBlocks(nextCursor || null, 50, origin, signal);
+        const response = await fetchBlocks(nextCursor || null, 36, origin, signal);
 
         if (signal?.aborted) {
           return;

@@ -10,6 +10,8 @@ const MEDIA_PREFIXES = [
   "large_",
   "poster_",
 ];
+const EDGE_CACHE_SECONDS = 20;
+const EDGE_STALE_SECONDS = 120;
 
 function normalizeExternalId(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -108,6 +110,16 @@ export async function GET(req: NextRequest) {
       return 100; // larger default for feeds
     })();
     const limit = Math.min(limitRaw, 1000);
+    const shouldUseEdgeCache =
+      !cursor &&
+      !(q && q.trim().length > 0) &&
+      !externalId &&
+      !sourceId &&
+      !runId &&
+      !(origin === "user" || Boolean(username));
+    const responseCacheControl = shouldUseEdgeCache
+      ? `public, s-maxage=${EDGE_CACHE_SECONDS}, stale-while-revalidate=${EDGE_STALE_SECONDS}`
+      : "private, no-cache, no-store, must-revalidate";
 
     // Parse cursor for pagination
     let cursorSavedAt: string | null = null;
@@ -364,13 +376,22 @@ export async function GET(req: NextRequest) {
       ).toString("base64");
     }
 
-    return NextResponse.json({
-      success: true,
-      blocks,
-      nextCursor,
-      count: blocks.length,
-      filters: { origin, username, sourceId, runId, q },
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        blocks,
+        nextCursor,
+        count: blocks.length,
+        filters: { origin, username, sourceId, runId, q },
+      },
+      {
+        headers: {
+          "Cache-Control": responseCacheControl,
+          Pragma: "no-cache",
+          Expires: "0",
+        },
+      }
+    );
   } catch (error) {
     console.error("Error in /api/blocks:", error);
     return NextResponse.json(

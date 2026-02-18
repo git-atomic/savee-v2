@@ -5,11 +5,8 @@
   "devCommand": "npm run dev",
   "regions": ["iad1"],
   "functions": {
-    "src/app/(payload)/api/engine/**/*.ts": {
-      "maxDuration": 30
-    },
-    "src/app/**/route.ts": {
-      "maxDuration": 20
+    "app/api/**/*.ts": {
+      "maxDuration": 15
     }
   }
 }

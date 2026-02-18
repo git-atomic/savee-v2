@@ -125,7 +125,7 @@ export function UserProfile({ username }: UserProfileProps) {
         const response = await fetchBlocksByUsername(
           username,
           nextCursor || null,
-          50,
+          36,
           signal
         );
 
