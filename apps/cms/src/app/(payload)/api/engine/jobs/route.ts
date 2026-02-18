@@ -26,6 +26,11 @@ async function isAuthorized(req: NextRequest): Promise<boolean> {
   // For admin panel access, check Payload session
   try {
     const payload = await getPayload({ config });
+    const staleMinutes = Math.max(
+      5,
+      parseInt(process.env.RUN_STALE_MINUTES || "20", 10) || 20
+    );
+    const staleThresholdMs = staleMinutes * 60 * 1000;
     const { user } = await payload.auth({ headers: req.headers });
     return !!user; // Allow any authenticated admin user
   } catch {
@@ -224,7 +229,7 @@ export async function GET(request: NextRequest) {
         const isStaleRunning =
           latestRun?.status === "running" &&
           typeof latestUpdatedAt === "number" &&
-          Date.now() - latestUpdatedAt > 5 * 60 * 1000; // 5 minutes stale threshold
+          Date.now() - latestUpdatedAt > staleThresholdMs;
 
         // REMOVED: Auto-reconcile - this was doing a DB query for every completed run
         // This should be done via a background job or only when explicitly requested

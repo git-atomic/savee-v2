@@ -99,6 +99,13 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_REGION: auto
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+          COOKIES_PATH: ${{ secrets.COOKIES_PATH }}
+          JOB_CONCURRENCY: ${{ secrets.JOB_CONCURRENCY }}
+          ITEM_CONCURRENCY: ${{ secrets.ITEM_CONCURRENCY }}
+          CMS_URL: ${{ secrets.CMS_URL }}
+          ENGINE_MONITOR_TOKEN: ${{ secrets.ENGINE_MONITOR_TOKEN }}
+          WORKER_PARALLELISM: ${{ secrets.WORKER_PARALLELISM }}
         run: |
           cd apps/worker
           python scripts/run_pending_once.py

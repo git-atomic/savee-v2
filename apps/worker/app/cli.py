@@ -1007,7 +1007,6 @@ async def create_or_get_source(session: AsyncSession, url: str) -> int:
                 source.source_type = SourceTypeEnum.blocks
                 # Update URL to bulk_import_ placeholder if it's not already one
                 if 'bulk_import_' not in source.url.lower():
-                    import time
                     timestamp = int(time.time())
                     source.url = f"https://savee.com/bulk_import_{timestamp}"
                 await session.commit()
@@ -1093,7 +1092,6 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
         
         if bulk_urls:
             # Generate a unique source identity for this bulk run
-            import time
             timestamp = int(time.time())
             # Use a fake user profile URL to group these
             url = f"https://savee.com/bulk_import_{timestamp}"
