@@ -497,15 +497,39 @@ export async function POST(request: NextRequest) {
           if (externalRunner) {
             // Do not spawn; return run details for external runner
             const dispatched = await triggerGithubMonitor(String(sourceId));
+            if (!dispatched) {
+              const hasToken = Boolean(
+                process.env.GITHUB_ACTIONS_TOKEN ||
+                  process.env.GITHUB_DISPATCH_TOKEN
+              );
+              const hasRepo = Boolean(process.env.GITHUB_REPO);
+              return NextResponse.json(
+                {
+                  success: false,
+                  jobId,
+                  runId,
+                  mode: "external",
+                  dispatched: false,
+                  error:
+                    "Run was queued as pending but GitHub monitor was not dispatched",
+                  hint:
+                    "Set GITHUB_ACTIONS_TOKEN (or GITHUB_DISPATCH_TOKEN) and GITHUB_REPO in CMS Vercel env, then redeploy.",
+                  debug: {
+                    hasToken,
+                    hasRepo,
+                    ref: process.env.GITHUB_REF || "main",
+                  },
+                },
+                { status: 503 }
+              );
+            }
             return NextResponse.json({
               success: true,
               jobId,
               runId,
               mode: "external",
-              dispatched,
-              message: dispatched
-                ? "Run enqueued and monitor dispatched"
-                : "Run enqueued as pending for external runner",
+              dispatched: true,
+              message: "Run enqueued and monitor dispatched",
             });
           }
 

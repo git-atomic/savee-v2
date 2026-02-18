@@ -253,25 +253,45 @@ export async function POST(request: NextRequest) {
       } catch (e) {
         // Silently handle errors
       }
+      const hasToken = Boolean(
+        process.env.GITHUB_ACTIONS_TOKEN || process.env.GITHUB_DISPATCH_TOKEN
+      );
+      const hasRepo = Boolean(process.env.GITHUB_REPO);
+      const debug = {
+        hasToken,
+        hasRepo,
+        ref: process.env.GITHUB_REF || "main",
+        dispatchLogs,
+      };
+
+      if (!dispatched) {
+        return NextResponse.json(
+          {
+            success: false,
+            runId,
+            sourceType: parsedUrl.sourceType,
+            username: parsedUrl.username,
+            mode: "external",
+            dispatched: false,
+            error:
+              "Run was queued as pending but GitHub monitor was not dispatched",
+            hint:
+              "Set GITHUB_ACTIONS_TOKEN (or GITHUB_DISPATCH_TOKEN) and GITHUB_REPO in CMS Vercel env, then redeploy.",
+            debug,
+          },
+          { status: 503 }
+        );
+      }
+
       return NextResponse.json({
         success: true,
         runId,
         sourceType: parsedUrl.sourceType,
         username: parsedUrl.username,
         mode: "external",
-        dispatched,
-        message: dispatched
-          ? "Run enqueued and monitor dispatched"
-          : "Run enqueued as pending for external runner",
-        debug: {
-          hasToken: !!(
-            process.env.GITHUB_ACTIONS_TOKEN ||
-            process.env.GITHUB_DISPATCH_TOKEN
-          ),
-          hasRepo: !!process.env.GITHUB_REPO,
-          ref: process.env.GITHUB_REF || "main",
-          dispatchLogs,
-        },
+        dispatched: true,
+        message: "Run enqueued and monitor dispatched",
+        debug,
       });
     }
 
