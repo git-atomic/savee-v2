@@ -2,7 +2,9 @@
 Core scraping functionality for Savee.com
 """
 import asyncio
+import base64
 import json
+import os
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
@@ -22,6 +24,14 @@ def _json_loads_maybe_bom(text: str):
     if isinstance(text, str):
         text = text.lstrip("\ufeff")
     return json.loads(text)
+
+
+def _decode_b64_text(value: str):
+    try:
+        raw = base64.b64decode(value)
+        return raw.decode("utf-8")
+    except Exception:
+        return None
 
 
 class ScrapedItem(BaseModel):
@@ -136,6 +146,33 @@ class SaveeSession:
                             'secure': True,
                         }])
                     cookies_loaded = True
+            except Exception:
+                pass
+
+        if not cookies_loaded:
+            try:
+                cj_b64 = os.getenv("COOKIES_JSON_B64", "")
+                if cj_b64:
+                    decoded = _decode_b64_text(cj_b64)
+                    if decoded:
+                        data = _json_loads_maybe_bom(decoded)
+                        if isinstance(data, dict) and 'cookies' in data:
+                            data = data['cookies']
+                        if isinstance(data, list):
+                            for c in data:
+                                if 'name' in c and 'value' in c:
+                                    domain = c.get('domain', '.savee.com')
+                                    if domain.startswith('.'):
+                                        domain = domain[1:]
+                                    await self.context.add_cookies([{
+                                        'name': c['name'],
+                                        'value': c['value'],
+                                        'domain': domain,
+                                        'path': c.get('path', '/'),
+                                        'httpOnly': c.get('httpOnly', False),
+                                        'secure': c.get('secure', True),
+                                    }])
+                            cookies_loaded = True
             except Exception:
                 pass
 

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import re
@@ -23,6 +24,14 @@ def _json_loads_maybe_bom(text: str):
     if isinstance(text, str):
         text = text.lstrip("\ufeff")
     return json.loads(text)
+
+
+def _decode_b64_text(value: str) -> Optional[str]:
+    try:
+        raw = base64.b64decode(value)
+        return raw.decode("utf-8")
+    except Exception:
+        return None
 
 
 def _normalize_cookie_entry(entry: dict) -> Optional[dict]:
@@ -92,12 +101,19 @@ def _load_cookies_from_json_text(text: str) -> Optional[list]:
 
 
 def load_cookies_from_env() -> Optional[list]:
-    # Prefer COOKIES_JSON, then COOKIES_PATH
+    # Prefer raw JSON, then base64 JSON, then file path.
     cj = settings.COOKIES_JSON
     if cj:
         c = _load_cookies_from_json_text(cj)
         if c:
             return c
+    cj_b64 = os.getenv("COOKIES_JSON_B64", "")
+    if cj_b64:
+        decoded = _decode_b64_text(cj_b64)
+        if decoded:
+            c = _load_cookies_from_json_text(decoded)
+            if c:
+                return c
     cp = settings.COOKIES_PATH
     if cp and os.path.exists(cp):
         try:

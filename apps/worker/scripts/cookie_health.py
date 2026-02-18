@@ -31,6 +31,14 @@ def _resolve_cookie_source() -> Tuple[str, list]:
     if cookies_json:
         return "COOKIES_JSON", _unwrap_cookie_payload(_json_loads_maybe_bom(cookies_json))
 
+    cookies_json_b64 = os.getenv("COOKIES_JSON_B64")
+    if cookies_json_b64:
+        try:
+            decoded = base64.b64decode(cookies_json_b64).decode("utf-8")
+            return "COOKIES_JSON_B64", _unwrap_cookie_payload(_json_loads_maybe_bom(decoded))
+        except Exception:
+            pass
+
     cookies_path = os.getenv("COOKIES_PATH", "").strip()
     if cookies_path:
         p = Path(cookies_path)
@@ -115,7 +123,7 @@ def main() -> int:
     if not auth:
         print("auth_token=missing")
         print(
-            "hint=Set COOKIES_JSON (secret or variable) with exported savee cookie JSON, "
+            "hint=Set COOKIES_JSON or COOKIES_JSON_B64 (secret/variable), "
             "or set COOKIES_PATH to a valid cookie file path."
         )
         return 1 if args.strict else 0
