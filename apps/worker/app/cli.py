@@ -14,7 +14,7 @@ if sys.platform.startswith('win'):
     if hasattr(sys.stderr, 'reconfigure'):
         sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-from sqlalchemy import select, update, or_
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.sql import func
@@ -304,45 +304,6 @@ async def _send_simple_log_to_cms(run_id: int, log_data: dict):
         # Fail silently if CMS is unavailable
         pass
 
-
-class BatchedLogSender:
-    """Batched log sender to reduce CMS API calls"""
-    def __init__(self, run_id: int, batch_size: int = 10, batch_interval_sec: float = 2.0):
-        self.run_id = run_id
-        self.batch_size = batch_size
-        self.batch_interval_sec = batch_interval_sec
-        self.log_queue: List[dict] = []
-        self.last_send_ts: float = 0.0
-        self._lock = asyncio.Lock()
-    
-    async def add_log(self, log_data: dict, flush_now: bool = False):
-        """Add log to batch. If flush_now=True or batch is full, send immediately."""
-        async with self._lock:
-            self.log_queue.append(log_data)
-            now = time.monotonic()
-            should_flush = (
-                flush_now
-                or len(self.log_queue) >= self.batch_size
-                or (now - self.last_send_ts) >= self.batch_interval_sec
-            )
-            if should_flush and self.log_queue:
-                await self._flush()
-    
-    async def _flush(self):
-        """Send all queued logs to CMS"""
-        if not self.log_queue:
-            return
-        # Send only the most recent log (most important) to reduce overhead
-        # For detailed logs, use the last entry which typically has completion status
-        latest_log = self.log_queue[-1]
-        await _send_simple_log_to_cms(self.run_id, latest_log)
-        self.log_queue.clear()
-        self.last_send_ts = time.monotonic()
-    
-    async def flush(self):
-        """Force flush remaining logs"""
-        async with self._lock:
-            await self._flush()
 
 def _generate_r2_key(url: str, external_id: str) -> str:
     """Generate organized R2 key for blocks based on source type and URL.
@@ -778,8 +739,13 @@ def _extract_username(url: str) -> Optional[str]:
     import re
     # Support both savee.it and savee.com domains
     match = re.search(r'savee\.(?:it|com)/([^/?]+)', url.lower())
-    if match and match.group(1) not in ['pop', 'trending', 'popular']:
-        return match.group(1)
+    if match:
+        candidate = match.group(1)
+        if candidate in ['pop', 'trending', 'popular', 'i']:
+            return None
+        if candidate.startswith('bulk_import_'):
+            return None
+        return candidate
     return None
 
 
@@ -998,15 +964,34 @@ async def create_or_get_source(session: AsyncSession, url: str) -> int:
     source = result.scalar_one_or_none()
     
     if source:
-        # Fallback detection: If source is marked as 'home' but has blocks with /i/ URLs,
-        # it should be 'blocks' type. This helps correct old sources created before blocks type existed.
-        if source.source_type == SourceTypeEnum.home:
+        # Fallback detection: if a source behaves like bulk/blocks, keep it as blocks.
+        if source.source_type in [SourceTypeEnum.home, SourceTypeEnum.user]:
+            source_url = (source.url or "").lower()
             detected_type = await _detect_source_type_from_blocks(session, source.id)
-            if detected_type == SourceTypeEnum.blocks:
-                logger.info(f"Correcting source {source.id} type from 'home' to 'blocks' based on blocks analysis")
+            should_be_blocks = (
+                detected_type == SourceTypeEnum.blocks
+                or "bulk_import_" in source_url
+            )
+            if should_be_blocks:
+                logger.info(
+                    f"Correcting source {source.id} type from '{source.source_type}' to 'blocks'"
+                )
+                stale_username = source.username
                 source.source_type = SourceTypeEnum.blocks
+                source.username = None
+                if stale_username and str(stale_username).startswith("bulk_import_"):
+                    try:
+                        await session.execute(
+                            delete(SaveeUser).where(
+                                SaveeUser.username == str(stale_username)
+                            )
+                        )
+                    except Exception as cleanup_err:
+                        logger.debug(
+                            f"Failed to cleanup stale bulk user '{stale_username}': {cleanup_err}"
+                        )
                 # Update URL to bulk_import_ placeholder if it's not already one
-                if 'bulk_import_' not in source.url.lower():
+                if "bulk_import_" not in source_url:
                     timestamp = int(time.time())
                     source.url = f"https://savee.com/bulk_import_{timestamp}"
                 await session.commit()
@@ -1155,16 +1140,7 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
             storage = R2Storage()
             
             print(f"[STARTING] {url} | Starting real-time scraping...")
-            
-            # Send starting log to CMS
-            await _send_simple_log_to_cms(run_id, {
-                "type": "STARTING",
-                "url": url,
-                "status": "⏳",
-                "message": "Starting real-time scraping job..."
-            })
-            
-            await log_starting(run_id, url, "Starting real-time scraping...")
+            await log_starting(run_id, url, 'Starting real-time scraping job...')
             
             # Update run status to running
             await update_run_status(session, run_id, RunStatusEnum.running, counters)
@@ -1204,10 +1180,15 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                         
                         try:
                             logger.info(f"Bulk processing {processed_count}/{len(bulk_urls)}: {item_url}")
+                            total_start = time.time()
+                            await log_fetch(run_id, item_url, 0.0, True)
                             # Scrape single item
+                            scrape_start = time.time()
                             item = await scraper._scrape_item_details(crawler, item_url)
                             if not item:
                                 raise ValueError(f"Failed to scrape details for {item_url}")
+                            scrape_time = time.time() - scrape_start
+                            await log_scrape(run_id, item_url, scrape_time, True)
                             
                             # Process item (re-using the logic from the main loop but for exactly one item)
                             # We simulate the loop body here for the bulk URLs
@@ -1216,16 +1197,22 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                             # Upload media first (before DB operations)
                             if getattr(item, 'media_url', None):
                                 try:
+                                    upload_start = time.time()
                                     if getattr(item, 'media_type', 'image') == 'image':
                                         r2_key = await storage.upload_image(item.media_url, base_key)
                                     else:
                                         poster = getattr(item, 'thumbnail_url', None) or getattr(item, 'og_image_url', None)
                                         r2_key = await storage.upload_video(item.media_url, base_key, poster)
                                     upload_succeeded = True
+                                    upload_time = time.time() - upload_start
+                                    await log_upload(run_id, item_url, upload_time, True, "media uploaded")
                                 except Exception as upload_err:
                                     logger.error(f"Upload failed for {item_url}: {upload_err}")
                                     # Upload failed, but continue to try DB upsert (may have existing block)
                                     r2_key = None
+                                    await log_upload(run_id, item_url, 0.0, False, str(upload_err))
+                            else:
+                                await log_upload(run_id, item_url, 0.0, True, "no media URL")
                             
                             # Upsert block to database
                             try:
@@ -1239,7 +1226,17 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                                 raise  # Re-raise to be caught by outer exception handler
                             
                             # Both upload and DB succeeded - commit the transaction
+                            write_start = time.time()
                             await session.commit()
+                            write_time = time.time() - write_start
+                            await log_write(run_id, item_url, write_time, True)
+                            total_time = time.time() - total_start
+                            await log_complete(
+                                run_id,
+                                item_url,
+                                total_time,
+                                f"{processed_count}/{len(bulk_urls)} completed",
+                            )
                             
                             # Update counters based on success
                             if r2_key and upload_succeeded:
@@ -1287,6 +1284,11 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                     item_iterator = scraper.scrape_home_iterator(max_items=max_items)
                 elif source_type == SourceTypeEnum.pop:
                     item_iterator = scraper.scrape_pop_iterator(max_items=max_items)
+                elif source_type == SourceTypeEnum.blocks:
+                    logger.info(
+                        "Blocks source detected (bulk placeholder); skipping user/profile scraping."
+                    )
+                    item_iterator = []
                 else:
                     username = _extract_username(url)
                     if username:
@@ -1354,15 +1356,6 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
             last_capacity_check_ts: float = 0.0
             cached_limits: Optional[dict] = None
 
-            # Batched logging to reduce CMS API calls
-            try:
-                log_batch_size = max(1, int(os.getenv('LOG_BATCH_SIZE', '10')))
-                log_batch_interval_sec = float(os.getenv('LOG_BATCH_INTERVAL_SEC', '2.0'))
-            except Exception:
-                log_batch_size = 10
-                log_batch_interval_sec = 2.0
-            batched_logger = BatchedLogSender(run_id, log_batch_size, log_batch_interval_sec)
-
             async with storage:
                 processed_count = 0
                 skipped_count = 0
@@ -1398,7 +1391,7 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                             print(f"[CAPACITY] {reason}; stopping run to avoid overage")
                             await _send_simple_log_to_cms(run_id, {
                                 "type": "CAPACITY",
-                                "status": "🛑",
+                                "status": "error",
                                 "message": f"Capacity guard hit: {reason}; auto-stopping"
                             })
                             # Mark source paused so UI shows 'stopped'
@@ -1509,12 +1502,15 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                         # Reset old-items streak when we find a new item to process
                         consecutive_old_items = 0
                         
-                        # Process item (reduced logging overhead - single combined log per item)
+                        # Process item and emit stage logs for the engine UI.
                         total_start = time.time()
                         print(f"[PROCESS] {item_url}", end=" ", flush=True)
+                        await log_fetch(run_id, item_url, 0.0, True)
+                        await log_scrape(run_id, item_url, 0.0, True)
                         
                         r2_key = None
                         base_key = None
+                        upload_note = ""
                         if hasattr(item, 'media_url') and item.media_url:
                             # Generate organized R2 key based on source type
                             base_key = _generate_r2_key(url, item.external_id)
@@ -1526,8 +1522,11 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                                 poster_candidate = getattr(item, 'thumbnail_url', None) or getattr(item, 'og_image_url', None) or getattr(item, 'image_url', None)
                                 r2_key = await storage.upload_video(item.media_url, base_key, poster_candidate)
                             upload_time = time.time() - upload_start
+                            upload_note = "media uploaded" if r2_key else "upload skipped"
                         else:
                             upload_time = 0.0
+                            upload_note = "no media URL"
+                        await log_upload(run_id, item_url, upload_time, True, upload_note)
                         
                         # Database write
                         write_start = time.time()
@@ -1554,21 +1553,13 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                         await session.commit()
                         
                         write_time = time.time() - write_start
+                        await log_write(run_id, item_url, write_time, True)
                         total_time = time.time() - total_start
                         upload_status = "OK" if r2_key else "NO_MEDIA"
                         print(f"| {upload_status} | Upload: {upload_time:.2f}s | Write: {write_time:.2f}s | Total: {total_time:.2f}s")
                         progress_msg = f"{processed_count}/{max_items if max_items else 'unlimited'} completed"
                         print(f"SUCCESS {progress_msg}")
                         await log_complete(run_id, item_url, total_time, progress_msg)
-                        
-                        # Send batched log (single entry per item with all stages combined)
-                        await batched_logger.add_log({
-                            "type": "COMPLETE",
-                            "url": item_url,
-                            "status": "✓",
-                            "timing": f"{total_time:.2f}s",
-                            "message": f"Processed: upload={upload_time:.2f}s, write={write_time:.2f}s, {progress_msg}"
-                        })
                         print("---")
                         
                         # If upsert returned an existing block id (dedup), treat as skipped instead of uploaded
@@ -1648,15 +1639,11 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
             await update_run_status(session, run_id, RunStatusEnum.completed, counters)
             await session.commit()
             
-            # Flush any remaining batched logs
-            if 'batched_logger' in locals():
-                await batched_logger.flush()
-            
             # Send completion log to CMS
             await _send_simple_log_to_cms(run_id, {
                 "type": "COMPLETE",
                 "url": url,
-                "status": "✓",
+                "status": "success",
                 "message": f"Job completed! Found: {counters['found']}, Uploaded: {counters['uploaded']}, Errors: {counters['errors']}"
             })
             

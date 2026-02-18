@@ -52,10 +52,16 @@ export function parseSaveeUrl(input: string): ParsedSaveeUrl {
     if (s0 === "pop" || s0 === "popular" || s0 === "trending") {
       return { isValid: true, sourceType: "pop", href: url.href };
     }
+    if (s0 === "i" && segs.length >= 2) {
+      return { isValid: true, sourceType: "blocks", href: url.href };
+    }
   }
 
   // Otherwise treat first segment as username unless it is reserved
   const candidate = segs[0]?.toLowerCase();
+  if (candidate?.startsWith("bulk_import_")) {
+    return { isValid: true, sourceType: "blocks", href: url.href };
+  }
   if (candidate && !RESERVED_SEGMENTS.has(candidate)) {
     return {
       isValid: true,

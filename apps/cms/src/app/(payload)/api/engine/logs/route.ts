@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    const parsedLimit = limitParam ? parseInt(limitParam, 10) : 150;
+    const parsedLimit = limitParam ? parseInt(limitParam, 10) : 500;
     const limit = Number.isFinite(parsedLimit) ? parsedLimit : 150;
     const logs = await getLogs(runId, limit);
 
@@ -67,11 +67,13 @@ export async function POST(request: NextRequest) {
     
     const body = await request.json().catch(() => ({}));
     const jobId = body.jobId || body.runId;
-    const log = body.log || body;
+    const rawLogs = Array.isArray(body.logs)
+      ? body.logs
+      : [body.log || body];
     
-    if (!jobId || !log) {
+    if (!jobId || rawLogs.length === 0) {
       return NextResponse.json(
-        { success: false, error: "jobId and log are required" },
+        { success: false, error: "jobId and log(s) are required" },
         { status: 400 }
       );
     }
@@ -84,19 +86,27 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Store log entry - handle both formats from worker
-    const logEntry = {
-      timestamp: log.timestamp || new Date().toISOString(),
-      type: log.type || "LOG",
-      url: log.url || log.item_url || "",
-      status: log.status || "",
-      timing: log.timing || (typeof log.timing === 'number' ? `${log.timing.toFixed(2)}s` : undefined),
-      message: log.message || log.progress || "",
-    };
-    
+    // Normalize and store multiple logs in one request.
+    const normalizedLogs = rawLogs
+      .filter((l: any) => l && typeof l === "object")
+      .slice(0, 200)
+      .map((log: any) => ({
+        timestamp: log.timestamp || new Date().toISOString(),
+        type: log.type || "LOG",
+        url: log.url || log.item_url || "",
+        status: log.status || "",
+        timing:
+          typeof log.timing === "number"
+            ? `${log.timing.toFixed(2)}s`
+            : log.timing,
+        message: log.message || log.progress || "",
+      }));
+
     try {
-      await addLog(runId, logEntry);
-      return NextResponse.json({ success: true });
+      for (const logEntry of normalizedLogs) {
+        await addLog(runId, logEntry);
+      }
+      return NextResponse.json({ success: true, count: normalizedLogs.length });
     } catch (error: any) {
       console.error("[logs] POST error storing log:", error?.message || error);
       return NextResponse.json(

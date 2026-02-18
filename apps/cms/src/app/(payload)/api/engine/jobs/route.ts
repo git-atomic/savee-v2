@@ -175,7 +175,11 @@ export async function GET(request: NextRequest) {
       
       // Batch fetch block URLs for all blocks sources
       try {
-        const blocksSources = sources.docs.filter((s: any) => s.sourceType === "blocks");
+        const blocksSources = sources.docs.filter(
+          (s: any) =>
+            s.sourceType === "blocks" ||
+            String(s.url || "").toLowerCase().includes("bulk_import_")
+        );
         if (blocksSources.length > 0) {
           const blocksSourceIds = blocksSources.map((s: any) => s.id);
           const blockUrlsQuery = await db.query(`
@@ -208,6 +212,13 @@ export async function GET(request: NextRequest) {
 
     const jobs: JobData[] = await Promise.all(
       sources.docs.map(async (source) => {
+        const normalizedSourceType =
+          (source as any).sourceType === "user" &&
+          String((source as any).url || "")
+            .toLowerCase()
+            .includes("bulk_import_")
+            ? "blocks"
+            : ((source as any).sourceType as "home" | "pop" | "user" | "blocks");
         // Get latest run from map, or fallback to individual query if batch failed
         let latestRun = latestRunsMap.get(source.id);
         if (!latestRun && sourceIds.length > 0) {
@@ -279,7 +290,7 @@ export async function GET(request: NextRequest) {
 
         // For blocks type, use pre-fetched block URLs from batch query
         let displayUrl = source.url;
-        if ((source as any).sourceType === "blocks") {
+        if (normalizedSourceType === "blocks") {
           const blockUrls = blockUrlsMap.get(source.id) || [];
           if (blockUrls.length > 0) {
             // Use comma-separated URLs for blocks type so they can be parsed and displayed
@@ -293,14 +304,14 @@ export async function GET(request: NextRequest) {
           id: source.id.toString(),
           runId: runIdStr, // Add run ID for logs
           url: displayUrl,
-          sourceType: source.sourceType as "home" | "pop" | "user" | "blocks",
+          sourceType: normalizedSourceType,
           username: source.username || undefined,
           maxItems: (typeof latestRun?.maxItems === "number"
             ? latestRun?.maxItems
             : null) as any,
-          origin: (source.sourceType === "user"
+          origin: (normalizedSourceType === "user"
             ? source.username || "user"
-            : source.sourceType) as string,
+            : normalizedSourceType) as string,
           status:
             latestRun?.status === "running" && !isStaleRunning
               ? "running"
@@ -313,7 +324,7 @@ export async function GET(request: NextRequest) {
                     : latestRun?.status === "error"
                       ? "error"
                       : latestRun?.status === "completed"
-                        ? (source as any).sourceType === "blocks" ? "completed" : "active"
+                        ? normalizedSourceType === "blocks" ? "completed" : "active"
                         : (source.status as any),
           runStatus: isStaleRunning ? "stale" : (latestRun?.status as string), // expose stale
           counters: latestRun?.counters || { found: 0, uploaded: 0, errors: 0 },

@@ -139,7 +139,7 @@ export async function getLogs(runId: number, limit: number = 500): Promise<LogEn
       return [];
     }
     
-    const safeLimit = Math.max(1, Math.min(limit, 200));
+    const safeLimit = Math.max(1, Math.min(limit, 1000));
     const result = await db.query(
       `SELECT ${selectColumns.join(', ')}
        FROM job_logs

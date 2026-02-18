@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 interface LogEntry {
   timestamp: string;
-  type: "STARTING" | "FETCH" | "SCRAPE" | "COMPLETE" | "WRITE/UPLOAD" | "ERROR";
+  type: string;
   url: string;
   status: "success" | "error" | "pending" | string;
   timing?: string;
@@ -56,7 +56,7 @@ export const JobLogsSection = React.memo(function JobLogsSection({
     snapshotInFlightRef.current = true;
     try {
       const res = await fetch(
-        `/api/engine/logs?runId=${encodeURIComponent(runIdNum)}&limit=180`,
+        `/api/engine/logs?runId=${encodeURIComponent(runIdNum)}&limit=500`,
         { cache: "no-store" }
       );
       if (res.ok) {
@@ -225,7 +225,11 @@ export const JobLogsSection = React.memo(function JobLogsSection({
     SCRAPE: "bg-amber-500/15 text-amber-400 border-amber-500/30",
     COMPLETE: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
     "WRITE/UPLOAD": "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+    WRITE: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
+    UPLOAD: "bg-cyan-500/15 text-cyan-400 border-cyan-500/30",
     ERROR: "bg-red-500/15 text-red-400 border-red-500/30",
+    RETRY: "bg-orange-500/15 text-orange-400 border-orange-500/30",
+    CAPACITY: "bg-red-500/15 text-red-400 border-red-500/30",
   };
 
   return (
@@ -294,23 +298,13 @@ export const JobLogsSection = React.memo(function JobLogsSection({
                 const raw = String(log.status || "").trim();
                 const lower = raw.toLowerCase();
                 const norm =
-                  raw === "✓" ||
                   lower === "success" ||
                   lower === "completed" ||
                   lower === "ok"
                     ? "success"
-                    : raw === "✗" ||
-                      lower === "error" ||
-                      lower === "failed" ||
-                      raw === "❌"
-                    ? "error"
-                    : raw === "⏳" ||
-                      raw === "🕒" ||
-                      lower === "pending" ||
-                      lower === "running" ||
-                      lower === "starting"
-                    ? "pending"
-                    : "pending";
+                    : lower === "error" || lower === "failed"
+                      ? "error"
+                      : "pending";
 
                 return (
                   <TableRow key={idx} className="border-0">
@@ -333,7 +327,7 @@ export const JobLogsSection = React.memo(function JobLogsSection({
                         className="font-mono text-sm text-muted-foreground block max-w-[420px] truncate"
                         title={log.url || log.message}
                       >
-                        {log.url || log.message || "—"}
+                        {log.url || log.message || "-"}
                       </code>
                     </TableCell>
                     <TableCell className="text-center py-2.5 px-4">
@@ -351,7 +345,7 @@ export const JobLogsSection = React.memo(function JobLogsSection({
                       </span>
                     </TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground py-2.5 px-4">
-                      {log.timing || "—"}
+                      {log.timing || "-"}
                     </TableCell>
                   </TableRow>
                 );
@@ -364,3 +358,4 @@ export const JobLogsSection = React.memo(function JobLogsSection({
     </div>
   );
 });
+
