@@ -131,7 +131,7 @@ jobs:
           if echo "$URL" | grep -q "?"; then URL="$URL&mode=external"; else URL="$URL?mode=external"; fi
           echo "POST $URL"
           set +e
-          http_code=$(curl --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 180 --max-time 90 --connect-timeout 15 -sS -o /tmp/resp.json -w "%{http_code}" -H "Authorization: Bearer $ENGINE_MONITOR_TOKEN" -X POST "$URL")
+          http_code=$(curl --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 240 --max-time 180 --connect-timeout 30 -sS -o /tmp/resp.json -w "%{http_code}" -H "Authorization: Bearer $ENGINE_MONITOR_TOKEN" -X POST "$URL")
           curl_exit=$?
           set -e
           echo "Response ($http_code):" && cat /tmp/resp.json || true

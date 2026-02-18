@@ -212,13 +212,18 @@ export async function GET(request: NextRequest) {
 
     const jobs: JobData[] = await Promise.all(
       sources.docs.map(async (source) => {
+        const sourceUrl = String((source as any).url || "").toLowerCase();
+        const sourceUsername = String((source as any).username || "").toLowerCase();
         const normalizedSourceType =
-          (source as any).sourceType === "user" &&
-          String((source as any).url || "")
-            .toLowerCase()
-            .includes("bulk_import_")
+          (source as any).sourceType === "blocks" ||
+          sourceUrl.includes("bulk_import_") ||
+          sourceUsername.startsWith("bulk_import_")
             ? "blocks"
             : ((source as any).sourceType as "home" | "pop" | "user" | "blocks");
+        const normalizedUsername =
+          normalizedSourceType === "blocks"
+            ? undefined
+            : (source as any).username || undefined;
         // Get latest run from map, or fallback to individual query if batch failed
         let latestRun = latestRunsMap.get(source.id);
         if (!latestRun && sourceIds.length > 0) {
@@ -305,12 +310,12 @@ export async function GET(request: NextRequest) {
           runId: runIdStr, // Add run ID for logs
           url: displayUrl,
           sourceType: normalizedSourceType,
-          username: source.username || undefined,
+          username: normalizedUsername,
           maxItems: (typeof latestRun?.maxItems === "number"
             ? latestRun?.maxItems
             : null) as any,
           origin: (normalizedSourceType === "user"
-            ? source.username || "user"
+            ? normalizedUsername || "user"
             : normalizedSourceType) as string,
           status:
             latestRun?.status === "running" && !isStaleRunning

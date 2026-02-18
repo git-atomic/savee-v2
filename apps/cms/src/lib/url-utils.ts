@@ -130,30 +130,31 @@ export function detectBulkUrls(input: string): BulkUrlDetection {
   const urls: string[] = [];
   
   for (const part of rawParts) {
-    if (part.startsWith("http://") || part.startsWith("https://")) {
-      if (part.includes("/i/") || part.includes("/api/items/")) {
-        try {
-          const url = new URL(part);
-          const host = url.hostname.toLowerCase();
-          const isSavee = host.endsWith("savee.it") || host.endsWith("savee.com");
-          if (!isSavee) {
-            continue;
-          }
+    const looksLikeSaveeItem =
+      part.includes("/i/") || part.includes("/api/items/");
+    if (!looksLikeSaveeItem) continue;
 
-          const itemId = extractSaveeItemIdFromPath(url.pathname);
-          if (!itemId) {
-            continue;
-          }
-
-          const normalized = canonicalSaveeItemUrl(url.origin, itemId);
-          if (!seen.has(normalized)) {
-            seen.add(normalized);
-            urls.push(normalized);
-          }
-        } catch {
-          continue;
-        }
+    const candidate = /^(https?:)?\/\//i.test(part) ? part : `https://${part}`;
+    try {
+      const url = new URL(candidate);
+      const host = url.hostname.toLowerCase();
+      const isSavee = host.endsWith("savee.it") || host.endsWith("savee.com");
+      if (!isSavee) {
+        continue;
       }
+
+      const itemId = extractSaveeItemIdFromPath(url.pathname);
+      if (!itemId) {
+        continue;
+      }
+
+      const normalized = canonicalSaveeItemUrl(url.origin, itemId);
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        urls.push(normalized);
+      }
+    } catch {
+      continue;
     }
   }
 

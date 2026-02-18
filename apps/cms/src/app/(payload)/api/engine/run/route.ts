@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
       const sourceData: SourceData = {
         url: normalizedUrl,
         sourceType: parsedUrl.sourceType,
-        status: parsedUrl.sourceType === "blocks" ? "completed" : "active",
+        status: "active",
       };
 
       if (parsedUrl.username) {
@@ -112,12 +112,28 @@ export async function POST(request: NextRequest) {
     } else {
       sourceId = sources.docs[0].id;
 
+      const sourcePatch: Record<string, any> = {};
+
       // Update username if provided and missing
       if (parsedUrl.username && !sources.docs[0].username) {
+        sourcePatch.username = parsedUrl.username;
+      }
+
+      // Keep source type in sync for bulk/item runs.
+      if (parsedUrl.sourceType === "blocks" && sources.docs[0].sourceType !== "blocks") {
+        sourcePatch.sourceType = "blocks";
+      }
+
+      // Manual run should be eligible for monitor dispatch.
+      if (sources.docs[0].status !== "active") {
+        sourcePatch.status = "active";
+      }
+
+      if (Object.keys(sourcePatch).length > 0) {
         await payload.update({
           collection: "sources",
           id: sourceId,
-          data: { username: parsedUrl.username },
+          data: sourcePatch,
         });
       }
     }
@@ -313,6 +329,18 @@ export async function POST(request: NextRequest) {
       };
 
       if (!dispatched) {
+        try {
+          await pool.query(
+            `UPDATE runs
+             SET status = 'error',
+                 error_message = $1,
+                 completed_at = now(),
+                 updated_at = now()
+             WHERE id = $2`,
+            ["Auto-failed: monitor dispatch was not triggered", runId]
+          );
+        } catch {}
+
         return NextResponse.json(
           {
             success: false,

@@ -526,6 +526,17 @@ export async function POST(request: NextRequest) {
             // Do not spawn; return run details for external runner
             const dispatched = await triggerGithubMonitor(String(sourceId));
             if (!dispatched) {
+              try {
+                await db.query(
+                  `UPDATE runs
+                   SET status = 'error',
+                       error_message = $1,
+                       completed_at = now(),
+                       updated_at = now()
+                   WHERE id = $2`,
+                  ["Auto-failed: monitor dispatch was not triggered", runId]
+                );
+              } catch {}
               const hasToken = Boolean(
                 process.env.GITHUB_ACTIONS_TOKEN ||
                   process.env.GITHUB_DISPATCH_TOKEN

@@ -8,6 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 60;
+const STALE_PENDING_MINUTES = 15;
 
 async function getDbConnection() {
   const payload = await getPayload({ config });
@@ -142,8 +143,14 @@ export async function POST(request: NextRequest) {
     // Find all active sources (exclude 'blocks' as they are strictly one-off)
     const sourcesRes = await db.query(
       requestedSourceId
-        ? `SELECT id, url, interval_seconds, disable_backoff FROM sources WHERE id = $1 AND status = 'active'`
-        : `SELECT id, url, interval_seconds, disable_backoff FROM sources WHERE status = 'active' AND source_type != 'blocks' ORDER BY updated_at DESC LIMIT 200`,
+        ? `SELECT id, url, interval_seconds, disable_backoff
+           FROM sources
+           WHERE id = $1 AND status != 'paused'`
+        : `SELECT id, url, interval_seconds, disable_backoff
+           FROM sources
+           WHERE status = 'active' AND source_type != 'blocks'
+           ORDER BY updated_at DESC
+           LIMIT 200`,
       requestedSourceId ? [requestedSourceId] : []
     );
 
@@ -174,13 +181,44 @@ export async function POST(request: NextRequest) {
 
       // Skip if currently running/paused (cast enum to text; avoid LOWER on enum)
       const activeRun = await db.query(
-        `SELECT id FROM runs WHERE source_id = $1 AND status IN ('running','paused','pending')
+        `SELECT id, status, updated_at, created_at
+         FROM runs
+         WHERE source_id = $1 AND status IN ('running','paused','pending')
          ORDER BY created_at DESC LIMIT 1`,
         [sourceId]
       );
       if (activeRun.rows.length > 0) {
-        skipped.push({ sourceId, reason: "already running/paused" });
-        continue;
+        const active = activeRun.rows[0] as {
+          id: number;
+          status: string;
+          updated_at?: string | Date | null;
+          created_at?: string | Date | null;
+        };
+        const refTs = active.updated_at || active.created_at;
+        const ageMs = refTs ? Date.now() - new Date(refTs).getTime() : 0;
+        const stalePending =
+          String(active.status).toLowerCase() === "pending" &&
+          ageMs > STALE_PENDING_MINUTES * 60 * 1000;
+
+        if (stalePending) {
+          try {
+            await db.query(
+              `UPDATE runs
+               SET status = 'error',
+                   error_message = $1,
+                   completed_at = now(),
+                   updated_at = now()
+               WHERE id = $2`,
+              [
+                `Auto-expired stale pending run after ${STALE_PENDING_MINUTES} minutes`,
+                active.id,
+              ]
+            );
+          } catch {}
+        } else {
+          skipped.push({ sourceId, reason: "already running/paused/pending" });
+          continue;
+        }
       }
 
       // Enforce dynamic interval since last completed run
