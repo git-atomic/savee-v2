@@ -7,6 +7,10 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { fetchBlocks } from "@/lib/api";
 import type { Block } from "@/types/block";
 import { useMasonryColumns } from "@/hooks/use-masonry-columns";
+import {
+  dedupeBlocksByStableKey,
+  mergeUniqueBlocks,
+} from "@/lib/block-dedupe";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
@@ -65,38 +69,10 @@ export function BlocksList(
           return;
         }
 
-        // Always deduplicate blocks by external_id to prevent duplicates
-        // external_id is the true unique identifier from Savee.it
-        // Use functional updates to ensure atomic state updates
         if (nextCursor) {
-          // Deduplicate blocks by external_id and media fingerprint to prevent duplicates from pagination overlap
-          setBlocks((prev) => {
-            const existingExternal = new Set(prev.filter(b => b.external_id).map(b => b.external_id));
-            const existingMedia = new Set(prev.map(b => b.r2_key || b.video_url || b.image_url).filter(Boolean));
-            
-            const newBlocks = response.blocks.filter((b) => {
-              if (b.external_id && existingExternal.has(b.external_id)) return false;
-              const media = b.r2_key || b.video_url || b.image_url;
-              if (media && existingMedia.has(media as string)) return false;
-              return true;
-            });
-            return [...prev, ...newBlocks];
-          });
+          setBlocks((prev) => mergeUniqueBlocks(prev, response.blocks ?? []));
         } else {
-          // Aggressive deduplication for initial load
-          const seenExternal = new Set<string>();
-          const seenMedia = new Set<string>();
-          const uniqueBlocks = response.blocks.filter((block) => {
-            if (block.external_id && seenExternal.has(block.external_id)) return false;
-            if (block.external_id) seenExternal.add(block.external_id);
-            
-            const media = block.r2_key || block.video_url || block.image_url;
-            if (media && seenMedia.has(media as string)) return false;
-            if (media) seenMedia.add(media as string);
-            
-            return true;
-          });
-          setBlocks(uniqueBlocks);
+          setBlocks(dedupeBlocksByStableKey(response.blocks ?? []));
         }
 
         setCursor(response.nextCursor || null);

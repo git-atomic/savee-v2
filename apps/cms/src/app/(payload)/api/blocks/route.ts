@@ -2,6 +2,88 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPayload } from "payload";
 import config from "@payload-config";
 
+const MEDIA_PREFIXES = [
+  "original_",
+  "thumb_",
+  "small_",
+  "medium_",
+  "large_",
+  "poster_",
+];
+
+function normalizeExternalId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractMediaFingerprint(raw: string): string | null {
+  let filename = raw.trim().toLowerCase();
+  if (!filename) return null;
+
+  for (const prefix of MEDIA_PREFIXES) {
+    if (filename.startsWith(prefix)) {
+      filename = filename.slice(prefix.length);
+      break;
+    }
+  }
+
+  filename = filename.replace(/\.[a-z0-9]{2,6}$/i, "");
+  const hashMatch = filename.match(/[0-9a-f]{10,}/i);
+  if (hashMatch) return hashMatch[0].toLowerCase();
+  return filename.length >= 8 ? filename : null;
+}
+
+function canonicalizeMedia(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  let input = value.trim();
+  if (!input) return null;
+
+  input = input.replace(/[?#].*$/, "");
+  if (!input) return null;
+
+  try {
+    if (/^https?:\/\//i.test(input)) {
+      const parsed = new URL(input);
+      const host = parsed.hostname.toLowerCase();
+      const normalizedPath = parsed.pathname
+        .replace(/\/+/g, "/")
+        .replace(/\/+$/, "");
+      const filename = normalizedPath.split("/").pop() || normalizedPath;
+      const fingerprint = extractMediaFingerprint(filename);
+      if (fingerprint) return `${host}:${fingerprint}`;
+      return `${host}:${normalizedPath.toLowerCase()}`;
+    }
+  } catch {
+    // Fall through to non-URL normalization.
+  }
+
+  const normalized = input.replace(/\/+/g, "/").replace(/\/+$/, "");
+  const filename = normalized.split("/").pop() || normalized;
+  const fingerprint = extractMediaFingerprint(filename);
+  if (fingerprint) return fingerprint;
+  return normalized.toLowerCase();
+}
+
+function getBlockDedupKey(block: any): string {
+  const external = normalizeExternalId(block?.external_id);
+  if (external) return `external:${external}`;
+
+  const mediaCandidates = [
+    block?.r2_key,
+    block?.video_url,
+    block?.image_url,
+    block?.thumbnail_url,
+    block?.og_image_url,
+  ];
+  for (const candidate of mediaCandidates) {
+    const media = canonicalizeMedia(candidate);
+    if (media) return `media:${media}`;
+  }
+
+  return `id:${String(block?.id ?? "")}`;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const payload = await getPayload({ config });
@@ -257,21 +339,22 @@ export async function GET(req: NextRequest) {
 
     const result = await payload.db.pool.query(query, params);
     
-    // Deduplicate by external_id and id - use external_id as primary key to avoid logical duplicates
-    // This handles cases where the same content might have been scraped multiple times incorrectly
-    const blocksMap = new Map();
-    result.rows.forEach((block: any) => {
-      // Prioritize identifying by external_id to eliminate cross-record duplicates
-      const key = block.external_id || block.id;
+    // Deduplicate with normalized keys so we collapse logical duplicates
+    // even when URLs differ only by query params, hashes, or CDN sizing paths.
+    const blocksMap = new Map<string, any>();
+    for (const block of result.rows) {
+      const key = getBlockDedupKey(block);
       if (!blocksMap.has(key)) {
         blocksMap.set(key, block);
       }
-    });
-    const blocks = Array.from(blocksMap.values());
+    }
+    const blocks = Array.from(blocksMap.values()).slice(0, limit);
 
     let nextCursor: string | null = null;
-    if (blocks.length === limit) {
-      const lastBlock = blocks[blocks.length - 1];
+    // Cursor must advance using the raw page boundary, not deduped length,
+    // otherwise duplicates can prevent pagination from progressing.
+    if (result.rows.length === limit) {
+      const lastBlock = result.rows[result.rows.length - 1];
       nextCursor = Buffer.from(
         JSON.stringify({
           saved_at: lastBlock.saved_at,

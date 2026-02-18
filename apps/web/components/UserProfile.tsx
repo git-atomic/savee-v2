@@ -10,6 +10,10 @@ import type { User } from "@/lib/api";
 import { useMasonryColumns } from "@/hooks/use-masonry-columns";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import {
+  dedupeBlocksByStableKey,
+  mergeUniqueBlocks,
+} from "@/lib/block-dedupe";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
@@ -127,20 +131,10 @@ export function UserProfile({ username }: UserProfileProps) {
 
         if (signal?.aborted) return;
 
-        // Always deduplicate blocks by ID to prevent duplicates
         if (nextCursor) {
-          // Deduplicate blocks by ID to prevent duplicates from pagination overlap
-          setBlocks((prev) => {
-            const existingIds = new Set(prev.map((b) => b.id));
-            const newBlocks = response.blocks.filter((b) => !existingIds.has(b.id));
-            return [...prev, ...newBlocks];
-          });
+          setBlocks((prev) => mergeUniqueBlocks(prev, response.blocks ?? []));
         } else {
-          // Deduplicate initial load as well in case API returns duplicates
-          const uniqueBlocks = response.blocks.filter(
-            (block, index, self) => index === self.findIndex((b) => b.id === block.id)
-          );
-          setBlocks(uniqueBlocks);
+          setBlocks(dedupeBlocksByStableKey(response.blocks ?? []));
         }
 
         setCursor(response.nextCursor || null);

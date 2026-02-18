@@ -1,4 +1,5 @@
 import type { Block, BlocksResponse } from "@/types/block";
+import { dedupeBlocksByStableKey } from "@/lib/block-dedupe";
 
 // Public CMS URL for client-side calls (baked at build time)
 const CMS_PUBLIC_URL =
@@ -47,32 +48,7 @@ export async function fetchBlocks(
 
     const data = (await response.json()) as BlocksResponse;
 
-    // Aggressive deduplication to prevent "duplicate blocks" issue in production.
-    // We deduplicate by:
-    // 1. external_id (the primary identifier)
-    // 2. id (the database identifier)
-    // 3. Media fingerprint (r2_key, video_url, or image_url) to catch items with same content but different IDs
-    const seenExternal = new Set<string>();
-    const seenIds = new Set<number>();
-    const seenMedia = new Set<string>();
-    
-    const uniqueBlocks = data.blocks.filter((block) => {
-      // Skip if we've seen this DB ID
-      if (seenIds.has(block.id)) return false;
-      seenIds.add(block.id);
-
-      // Skip if we've seen this external ID
-      if (block.external_id && seenExternal.has(block.external_id)) return false;
-      if (block.external_id) seenExternal.add(block.external_id);
-
-      // Skip if we've seen this media URL (identical content)
-      const mediaUrl = block.r2_key || block.video_url || block.image_url;
-      if (mediaUrl && seenMedia.has(mediaUrl)) return false;
-      if (mediaUrl) seenMedia.add(mediaUrl);
-
-      return true;
-    });
-
+    const uniqueBlocks = dedupeBlocksByStableKey(data.blocks ?? []);
     return { ...data, blocks: uniqueBlocks };
   } catch (error) {
     throw error;
@@ -271,7 +247,7 @@ export async function searchBlocks(
     }
 
     const data = (await response.json()) as BlocksResponse;
-    return data;
+    return { ...data, blocks: dedupeBlocksByStableKey(data.blocks ?? []) };
   } catch (error) {
     throw error;
   }
@@ -350,7 +326,7 @@ export async function fetchBlocksByUsername(
     }
 
     const data = (await response.json()) as BlocksResponse;
-    return data;
+    return { ...data, blocks: dedupeBlocksByStableKey(data.blocks ?? []) };
   } catch (error) {
     throw error;
   }

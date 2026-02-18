@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { dedupeBlocksByStableKey } from "@/lib/block-dedupe";
 
 // Force dynamic rendering - prevent Next.js from caching this route
 export const dynamic = "force-dynamic";
@@ -56,9 +57,21 @@ export async function GET(req: NextRequest) {
       }
 
       const data = await response.json();
+      const dedupedBlocks =
+        data && Array.isArray(data.blocks)
+          ? dedupeBlocksByStableKey(data.blocks)
+          : null;
+      const normalizedData =
+        dedupedBlocks !== null
+          ? {
+              ...data,
+              blocks: dedupedBlocks,
+              count: dedupedBlocks.length,
+            }
+          : data;
 
       // NO CACHING - prevents duplicate blocks from stale edge responses
-      return NextResponse.json(data, {
+      return NextResponse.json(normalizedData, {
         headers: {
           "Cache-Control": "private, no-cache, no-store, must-revalidate",
           Pragma: "no-cache",
