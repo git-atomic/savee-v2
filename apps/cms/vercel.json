@@ -3,13 +3,5 @@
   "installCommand": "npm install --prefer-offline --no-audit --fund=false",
   "buildCommand": "npm run build",
   "devCommand": "npm run dev",
-  "regions": ["iad1"],
-  "functions": {
-    "src/app/(payload)/api/engine/**/*.ts": {
-      "maxDuration": 30
-    },
-    "src/app/**/route.ts": {
-      "maxDuration": 20
-    }
-  }
+  "regions": ["iad1"]
 }
