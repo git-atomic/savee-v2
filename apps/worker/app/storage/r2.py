@@ -107,9 +107,17 @@ class R2Storage:
         """Close R2 connection"""
         if self.client:
             await self.client.__aexit__(None, None, None)
+        self.client = None
+        self.session = None
+
+    async def _ensure_connected(self):
+        """Ensure the S3 client is initialized before use."""
+        if self.client is None:
+            await self.connect()
             
     async def object_exists(self, key: str) -> bool:
         """Check if object exists in R2"""
+        await self._ensure_connected()
         # Handle secondary keys
         target_bucket = self.active_bucket
         real_key = key
@@ -130,6 +138,7 @@ class R2Storage:
             
     async def upload_file(self, file_data: bytes, key: str, content_type: str = None) -> str:
         """Upload file to R2. Returns the stored key (possibly prefixed)."""
+        await self._ensure_connected()
         if not content_type:
             content_type = mimetypes.guess_type(key)[0] or 'application/octet-stream'
             
@@ -371,6 +380,7 @@ class R2Storage:
     async def get_presigned_url(self, key: str, expires_in: int = 3600) -> str:
         """Generate presigned URL for private access"""
         try:
+            await self._ensure_connected()
             url = await self.client.generate_presigned_url(
                 'get_object',
                 Params={'Bucket': settings.r2_bucket_name, 'Key': key},
@@ -405,6 +415,7 @@ class R2Storage:
     async def delete_object(self, key: str):
         """Delete object from R2"""
         try:
+            await self._ensure_connected()
             await self.client.delete_object(Bucket=settings.r2_bucket_name, Key=key)
             logger.debug(f"Deleted object: {key}")
             
@@ -416,6 +427,7 @@ class R2Storage:
         """Delete all objects under a prefix. Return count deleted."""
         deleted = 0
         try:
+            await self._ensure_connected()
             continuation = None
             while True:
                 kwargs = {
@@ -503,6 +515,7 @@ class R2Storage:
     async def list_objects(self, prefix: str = '', limit: int = 1000) -> List[Dict]:
         """List objects in bucket"""
         try:
+            await self._ensure_connected()
             response = await self.client.list_objects_v2(
                 Bucket=settings.r2_bucket_name,
                 Prefix=prefix,
@@ -567,7 +580,14 @@ async def get_storage() -> R2Storage:
     global _storage
     
     if _storage is None:
-        _storage = R2Storage()
+        candidate = R2Storage()
+        try:
+            await candidate.connect()
+            _storage = candidate
+        except Exception:
+            _storage = None
+            raise
+    elif _storage.client is None:
         await _storage.connect()
         
     return _storage
@@ -580,4 +600,3 @@ async def close_storage():
     if _storage:
         await _storage.close()
         _storage = None
-

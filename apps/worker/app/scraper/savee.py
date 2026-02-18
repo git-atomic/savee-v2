@@ -951,8 +951,22 @@ class SaveeScraper:
         # Add source URL to links if available
         if source_api_url:
             try:
-                final_url = await self._fetch_source_final_url(crawler, source_api_url)
-                if final_url and final_url != source_api_url:
+                # Normalize relative/partial source URLs before navigation.
+                normalized_source_api_url = source_api_url
+                try:
+                    normalized_source_api_url = urlsplit(source_api_url).geturl()
+                except Exception:
+                    normalized_source_api_url = source_api_url
+                if not str(normalized_source_api_url).startswith(("http://", "https://")):
+                    normalized_source_api_url = f"https://savee.com{str(source_api_url).strip()}"
+
+                host = urlsplit(normalized_source_api_url).netloc.lower()
+                if "savee.com" in host or "savee.it" in host:
+                    final_url = await self._fetch_source_final_url(crawler, normalized_source_api_url)
+                else:
+                    final_url = None
+
+                if final_url and final_url != normalized_source_api_url:
                     # Add the resolved source URL to links
                     links.append({"href": final_url, "text": "original source"})
             except Exception as e:

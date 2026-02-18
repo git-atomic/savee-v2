@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPayload } from "payload";
 import config from "@payload-config";
-import { parseSaveeUrl } from "../../../../../lib/url-utils";
+import { detectBulkUrls, parseSaveeUrl } from "../../../../../lib/url-utils";
 import { spawn } from "child_process";
 import path from "path";
 
@@ -16,14 +16,15 @@ interface SourceData {
 
 export async function POST(request: NextRequest) {
   try {
-    const { url, maxItems, force: forceBody } = await request.json();
+    const { url: rawUrl, maxItems, force: forceBody } = await request.json();
 
-    if (!url) {
+    if (!rawUrl) {
       return NextResponse.json(
         { success: false, error: "URL is required" },
         { status: 400 }
       );
     }
+    const url = String(rawUrl).trim();
 
     const payload = await getPayload({ config });
 
@@ -64,6 +65,8 @@ export async function POST(request: NextRequest) {
       }
     } catch {}
 
+    const bulkDetection = detectBulkUrls(url);
+
     // Parse the URL to determine type and extract username
     const parsedUrl = parseSaveeUrl(url);
 
@@ -74,11 +77,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const normalizedUrl =
+      bulkDetection.isBulk || bulkDetection.count > 1
+        ? url
+        : (parsedUrl.href || url).trim();
+
     // Create or find source by URL. If same URL exists but with missing username, update it.
     const sources = await payload.find({
       collection: "sources",
       where: {
-        url: { equals: url },
+        url: { equals: normalizedUrl },
       },
       limit: 1,
     });
@@ -87,7 +95,7 @@ export async function POST(request: NextRequest) {
 
     if (sources.docs.length === 0) {
       const sourceData: SourceData = {
-        url,
+        url: normalizedUrl,
         sourceType: parsedUrl.sourceType,
         status: parsedUrl.sourceType === "blocks" ? "completed" : "active",
       };
@@ -345,7 +353,7 @@ export async function POST(request: NextRequest) {
           "-m",
           "app.cli",
           "--start-url",
-          url,
+          normalizedUrl,
           "--max-items",
           (typeof maxItems === "number" && maxItems > 0
             ? maxItems

@@ -29,6 +29,26 @@ function safeUrl(input: string): URL | null {
   }
 }
 
+function extractSaveeItemIdFromPath(pathname: string): string | null {
+  const itemPath = pathname.match(/\/i\/([A-Za-z0-9_-]{5,50})(?:\/|$)/i);
+  if (itemPath?.[1]) {
+    return itemPath[1];
+  }
+
+  const sourceApiPath = pathname.match(
+    /\/api\/items\/([A-Za-z0-9_-]{5,50})\/source(?:\/|$)/i
+  );
+  if (sourceApiPath?.[1]) {
+    return sourceApiPath[1];
+  }
+
+  return null;
+}
+
+function canonicalSaveeItemUrl(origin: string, itemId: string): string {
+  return `${origin}/i/${itemId}`;
+}
+
 export function parseSaveeUrl(input: string): ParsedSaveeUrl {
   const url = safeUrl(String(input || "").trim());
   if (!url) return { isValid: false, sourceType: "user" };
@@ -41,6 +61,15 @@ export function parseSaveeUrl(input: string): ParsedSaveeUrl {
   const path = url.pathname.replace(/\/+$/g, "");
   const segs = path.split("/").filter(Boolean);
 
+  const maybeItemId = extractSaveeItemIdFromPath(url.pathname);
+  if (maybeItemId) {
+    return {
+      isValid: true,
+      sourceType: "blocks",
+      href: canonicalSaveeItemUrl(url.origin, maybeItemId),
+    };
+  }
+
   // Home page
   if (segs.length === 0) {
     return { isValid: true, sourceType: "home", href: url.href };
@@ -51,6 +80,9 @@ export function parseSaveeUrl(input: string): ParsedSaveeUrl {
     const s0 = segs[0].toLowerCase();
     if (s0 === "pop" || s0 === "popular" || s0 === "trending") {
       return { isValid: true, sourceType: "pop", href: url.href };
+    }
+    if (s0 === "api") {
+      return { isValid: false, sourceType: "user" };
     }
     if (s0 === "i" && segs.length >= 2) {
       return { isValid: true, sourceType: "blocks", href: url.href };
@@ -99,23 +131,27 @@ export function detectBulkUrls(input: string): BulkUrlDetection {
   
   for (const part of rawParts) {
     if (part.startsWith("http://") || part.startsWith("https://")) {
-      // Check if it's an item URL (/i/)
-      if (part.includes("/i/")) {
+      if (part.includes("/i/") || part.includes("/api/items/")) {
         try {
-          // Normalize URL (remove trailing slashes, fragments, query params)
           const url = new URL(part);
-          const normalized = `${url.protocol}//${url.hostname}${url.pathname.replace(/\/+$/, "")}`;
-          
+          const host = url.hostname.toLowerCase();
+          const isSavee = host.endsWith("savee.it") || host.endsWith("savee.com");
+          if (!isSavee) {
+            continue;
+          }
+
+          const itemId = extractSaveeItemIdFromPath(url.pathname);
+          if (!itemId) {
+            continue;
+          }
+
+          const normalized = canonicalSaveeItemUrl(url.origin, itemId);
           if (!seen.has(normalized)) {
             seen.add(normalized);
             urls.push(normalized);
           }
         } catch {
-          // If URL parsing fails, try to use as-is
-          if (!seen.has(part)) {
-            seen.add(part);
-            urls.push(part);
-          }
+          continue;
         }
       }
     }

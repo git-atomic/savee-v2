@@ -25,8 +25,9 @@ export function JobTextarea({
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       disabled={disabled}
+      rows={12}
       className={cn(
-        "min-h-64 w-full resize-none flex-1 overflow-y-auto border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none",
+        "h-full min-h-64 max-h-full w-full flex-1 resize-none overflow-y-auto border-0 bg-transparent [field-sizing:fixed] focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none",
         className
       )}
     />

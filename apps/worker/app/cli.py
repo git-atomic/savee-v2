@@ -246,6 +246,8 @@ def _detect_source_type(url: str) -> SourceTypeEnum:
     # Direct block/item URL
     if "savee.com/i/" in u or "savee.it/i/" in u:
         return SourceTypeEnum.blocks
+    if "savee.com/api/items/" in u or "savee.it/api/items/" in u:
+        return SourceTypeEnum.blocks
     
     # Support both savee.it and savee.com domains
     if u in {"https://savee.it", "https://savee.it/", "savee.it", 
@@ -255,6 +257,24 @@ def _detect_source_type(url: str) -> SourceTypeEnum:
                             "savee.com/pop", "savee.com/trending", "savee.com/popular"]):
         return SourceTypeEnum.pop
     return SourceTypeEnum.user
+
+
+def _canonicalize_item_url(raw_url: str) -> Optional[str]:
+    """Normalize any Savee item/source URL to canonical https://savee.com/i/<id> form."""
+    if not raw_url:
+        return None
+    try:
+        parsed = urlsplit(raw_url.strip())
+        host = (parsed.netloc or "").lower()
+        if "savee.com" not in host and "savee.it" not in host:
+            return None
+        match = re.search(r"/(?:i|api/items)/([A-Za-z0-9_-]{5,50})", parsed.path, flags=re.IGNORECASE)
+        if not match:
+            return None
+        item_id = match.group(1)
+        return f"https://savee.com/i/{item_id}"
+    except Exception:
+        return None
 
 
 async def _detect_source_type_from_blocks(session: AsyncSession, source_id: int) -> SourceTypeEnum | None:
@@ -1066,6 +1086,17 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
     """Run scraper for a specific URL with direct DB writes."""
     # Initialize counters at the top to avoid UnboundLocalError
     counters = {'found': 0, 'uploaded': 0, 'errors': 0, 'skipped': 0}
+    input_url = str(url or "").strip()
+    single_item_url = _canonicalize_item_url(input_url)
+    if (
+        single_item_url
+        and "," not in input_url
+        and "\n" not in input_url
+        and input_url.lower().count("http") <= 1
+    ):
+        url = single_item_url
+    else:
+        url = input_url
     
     # Detect bulk import (list of URLs)
     bulk_urls = []
@@ -1078,20 +1109,11 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
         seen = set()
         for part in raw_parts:
             clean = part.strip()
-            if clean.startswith('http') and '/i/' in clean:
-                # Normalize URL (remove trailing slashes, fragments, query params)
-                try:
-                    from urllib.parse import urlparse
-                    parsed = urlparse(clean)
-                    normalized = f"{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
-                    if normalized not in seen:
-                        seen.add(normalized)
-                        bulk_urls.append(normalized)
-                except Exception:
-                    # Fallback to raw URL if parsing fails
-                    if clean not in seen:
-                        seen.add(clean)
-                        bulk_urls.append(clean)
+            if clean.startswith('http'):
+                normalized = _canonicalize_item_url(clean)
+                if normalized and normalized not in seen:
+                    seen.add(normalized)
+                    bulk_urls.append(normalized)
         
         if bulk_urls:
             # Generate a unique source identity for this bulk run
@@ -1156,6 +1178,7 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
             # Initialize scraper and storage
             scraper = SaveeScraper()
             storage = R2Storage()
+            await storage.connect()
             
             print(f"[STARTING] {url} | Starting real-time scraping...")
             await log_starting(run_id, url, 'Starting real-time scraping job...')
@@ -1675,6 +1698,11 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                 await session.commit()
             raise
         finally:
+            try:
+                if 'storage' in locals() and storage is not None:
+                    await storage.close()
+            except Exception:
+                pass
             await engine.dispose()
 
 

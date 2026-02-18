@@ -185,7 +185,7 @@ export function AddJobForm() {
               disabled={isSubmitting}
             />
           </div>
-          <div className="shrink-0 border-t border-border/60 bg-background p-6 pt-4">
+          <div className="sticky bottom-0 z-10 shrink-0 border-t border-border/60 bg-background p-6 pt-4">
             <div className="flex justify-center">
               <Button
                 type="submit"
