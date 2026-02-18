@@ -76,6 +76,7 @@ jobs:
             URL="${CMS_BASE%/}/api/engine/monitor"
           fi
           [ -z "$URL" ] && { echo "MONITOR_URL or CMS_URL required"; exit 1; }
+          echo '{"startedDetails":[]}' > /tmp/resp.json
           SID="${{ github.event.inputs.sourceId }}"; BF="${{ github.event.inputs.backfill }}"
           if [ "$BF" = "true" ]; then
             if echo "$URL" | grep -q "?"; then URL="$URL&backfill=true"; else URL="$URL?backfill=true"; fi
@@ -85,10 +86,21 @@ jobs:
           fi
           if echo "$URL" | grep -q "?"; then URL="$URL&mode=external"; else URL="$URL?mode=external"; fi
           echo "POST $URL"
-          http_code=$(curl --retry 3 --retry-delay 5 --max-time 25 --connect-timeout 10 -sS -o /tmp/resp.json -w "%{http_code}" -H "Authorization: Bearer $ENGINE_MONITOR_TOKEN" -X POST "$URL")
+          set +e
+          http_code=$(curl --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 180 --max-time 90 --connect-timeout 15 -sS -o /tmp/resp.json -w "%{http_code}" -H "Authorization: Bearer $ENGINE_MONITOR_TOKEN" -X POST "$URL")
+          curl_exit=$?
+          set -e
           echo "Response ($http_code):" && cat /tmp/resp.json || true
-          if [ "$http_code" -ge 300 ]; then
-            echo "Monitor returned HTTP $http_code"; exit 1; fi
+          if [ $curl_exit -ne 0 ]; then
+            echo "Monitor call timed out/failed (curl exit $curl_exit). Continuing with /api/engine/pending fallback."
+            [ -s /tmp/resp.json ] || echo '{"startedDetails":[]}' > /tmp/resp.json
+          elif [ "$http_code" -ge 300 ]; then
+            if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+              echo "Monitor auth failed (HTTP $http_code). Check ENGINE_MONITOR_TOKEN."; exit 1;
+            fi
+            echo "Monitor returned HTTP $http_code; continuing with /api/engine/pending fallback."
+            [ -s /tmp/resp.json ] || echo '{"startedDetails":[]}' > /tmp/resp.json
+          fi
 
       - name: Run pending runs (Python worker)
         env:

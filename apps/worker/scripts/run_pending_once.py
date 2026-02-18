@@ -20,12 +20,16 @@ def normalize_cms_base_url(raw_url: str) -> str:
 
 def main() -> int:
     resp_path = "/tmp/resp.json"
-    if not os.path.exists(resp_path):
-        print("No /tmp/resp.json found")
-        return 0
-    with open(resp_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    runs = data.get("startedDetails") or []
+    runs = []
+    if os.path.exists(resp_path):
+        try:
+            with open(resp_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            runs = data.get("startedDetails") or []
+        except Exception as e:
+            print("Failed to parse /tmp/resp.json:", e)
+    else:
+        print("No /tmp/resp.json found; will rely on /api/engine/pending")
     # Merge with /api/engine/pending for robustness
     cms_url = normalize_cms_base_url(os.environ.get("CMS_URL", ""))
     token = os.environ.get("ENGINE_MONITOR_TOKEN", "")
@@ -46,6 +50,18 @@ def main() -> int:
                         })
         except Exception as e:
             print("pending fetch error:", e)
+    # De-duplicate by runId (monitor response + pending endpoint can overlap)
+    deduped = []
+    seen_run_ids = set()
+    for r in runs:
+        rid = str(r.get("runId") or "").strip()
+        if not rid:
+            continue
+        if rid in seen_run_ids:
+            continue
+        seen_run_ids.add(rid)
+        deduped.append(r)
+    runs = deduped
     if not runs:
         print("No runs to execute")
         return 0

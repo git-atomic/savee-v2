@@ -4,6 +4,11 @@ import config from "@payload-config";
 import { spawn } from "child_process";
 import path from "path";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const maxDuration = 60;
+
 async function getDbConnection() {
   const payload = await getPayload({ config });
   const pool = (payload.db as any).pool;

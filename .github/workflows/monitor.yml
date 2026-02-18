@@ -95,10 +95,12 @@ jobs:
           fi
 
           if [ -z "$URL" ]; then echo "Provide MONITOR_URL or CMS_URL secret"; exit 1; fi
+          # Ensure worker step always has a response file to parse
+          echo '{"startedDetails":[]}' > /tmp/resp.json
           # Seed a source if requested and none exist yet
           if [ -n "$SEED_URL" ] && [ -n "$CMS_URL" ]; then
             echo "Ensuring at least one source via /api/engine/run";
-            curl --retry 3 --retry-delay 3 --max-time 20 -sS -X POST "${CMS_BASE%/}/api/engine/run?mode=external" \
+            curl --retry 5 --retry-all-errors --retry-delay 3 --max-time 45 -sS -X POST "${CMS_BASE%/}/api/engine/run?mode=external" \
               -H 'Content-Type: application/json' \
               --data "{\"url\":\"$SEED_URL\",\"maxItems\":0}" || true
           fi
@@ -112,10 +114,21 @@ jobs:
           # Force external-runner mode
           if echo "$URL" | grep -q "?"; then URL="$URL&mode=external"; else URL="$URL?mode=external"; fi
           echo "POST $URL"
-          http_code=$(curl --retry 3 --retry-delay 5 --max-time 25 --connect-timeout 10 -sS -o /tmp/resp.json -w "%{http_code}" -H "Authorization: Bearer $ENGINE_MONITOR_TOKEN" -X POST "$URL")
+          set +e
+          http_code=$(curl --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 180 --max-time 90 --connect-timeout 15 -sS -o /tmp/resp.json -w "%{http_code}" -H "Authorization: Bearer $ENGINE_MONITOR_TOKEN" -X POST "$URL")
+          curl_exit=$?
+          set -e
           echo "Response ($http_code):" && cat /tmp/resp.json || true
-          if [ "$http_code" -ge 300 ]; then
-            echo "Monitor returned HTTP $http_code"; exit 1; fi
+          if [ $curl_exit -ne 0 ]; then
+            echo "Monitor call timed out/failed (curl exit $curl_exit). Continuing with /api/engine/pending fallback."
+            [ -s /tmp/resp.json ] || echo '{"startedDetails":[]}' > /tmp/resp.json
+          elif [ "$http_code" -ge 300 ]; then
+            if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
+              echo "Monitor auth failed (HTTP $http_code). Check ENGINE_MONITOR_TOKEN."; exit 1;
+            fi
+            echo "Monitor returned HTTP $http_code; continuing with /api/engine/pending fallback."
+            [ -s /tmp/resp.json ] || echo '{"startedDetails":[]}' > /tmp/resp.json
+          fi
 
       - name: Run pending runs (Python worker)
         env:
