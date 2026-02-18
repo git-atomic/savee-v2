@@ -32,7 +32,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import aiohttp
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import aioboto3
 from botocore.exceptions import ClientError
 
@@ -312,8 +312,11 @@ class R2Storage:
                 # Upload thumbnail
                 thumb_key = f"{base_key}/{size_name}_{content_hash}.jpg"
                 await self.upload_file(thumb_data, thumb_key, 'image/jpeg')
+        except UnidentifiedImageError:
+            logger.debug("Skipping thumbnails: unsupported image format")
+            # Don't raise - thumbnails are optional
         except Exception as e:
-            logger.error(f"Failed to generate thumbnails: {e}")
+            logger.warning(f"Thumbnail generation skipped: {e}")
             # Don't raise - thumbnails are optional
 
     async def upload_avatar(self, username: str, avatar_url: str) -> str:
@@ -370,6 +373,8 @@ class R2Storage:
             return '.gif'
         elif path.endswith('.webp'):
             return '.webp'
+        elif path.endswith('.avif'):
+            return '.avif'
         elif path.endswith('.mp4'):
             return '.mp4'
         elif path.endswith('.webm'):

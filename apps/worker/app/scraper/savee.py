@@ -948,8 +948,11 @@ class SaveeScraper:
             # Try to extract from raw HTML if JavaScript failed
             _, color_hexes, ai_tags, colors, links = self._extract_metadata_from_html(html, item_url)
 
-        # Add source URL to links if available
-        if source_api_url:
+        # Add source URL to links if available.
+        # This extra network hop is noisy/expensive in CI and can fail on some edge hosts,
+        # so keep it opt-in.
+        resolve_source_urls = os.getenv("RESOLVE_SOURCE_URLS", "false").strip().lower() in ("1", "true", "yes")
+        if source_api_url and resolve_source_urls:
             try:
                 # Normalize relative/partial source URLs before navigation.
                 normalized_source_api_url = source_api_url
@@ -970,7 +973,7 @@ class SaveeScraper:
                     # Add the resolved source URL to links
                     links.append({"href": final_url, "text": "original source"})
             except Exception as e:
-                logger.warning(f"Failed to resolve source URL for {item_id}: {e}")
+                logger.debug(f"Failed to resolve source URL for {item_id}: {e}")
 
         # Use comprehensive title extraction
         title = og_title or sidebar_info.get('sidebarTitle') or f"Item {item_id}"
@@ -1063,19 +1066,34 @@ class SaveeScraper:
         return tags, color_hexes, ai_tags, colors, links
 
     async def _fetch_source_final_url(self, crawler: AsyncWebCrawler, api_url: str) -> Optional[str]:
-        """Fetch the final URL from the source API endpoint."""
+        """Resolve the final redirected URL for a source API endpoint (best effort)."""
         try:
-            from crawl4ai import CrawlerRunConfig
-            cfg = CrawlerRunConfig(
-                wait_for="js:() => true",
-                page_timeout=20000,
-            )
-            result = await crawler.arun(url=api_url, config=cfg)
-            if getattr(result, 'success', False):
-                return getattr(result, 'url', None)
+            parsed = urlsplit(api_url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                return None
+            # Hard allowlist to avoid unexpected hosts
+            host = parsed.netloc.lower()
+            if "savee.com" not in host and "savee.it" not in host:
+                return None
+
+            timeout = aiohttp.ClientTimeout(total=10, connect=4)
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+                ),
+                "Accept": "*/*",
+                "Referer": "https://savee.com/",
+            }
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(api_url, allow_redirects=True) as response:
+                    if response.status >= 400:
+                        return None
+                    final_url = str(response.url)
+                    return final_url or None
         except Exception as e:
-            logger.error(f"Failed to fetch source final URL {api_url}: {e}")
-        return None
+            logger.debug(f"Source URL resolve skipped for {api_url}: {e}")
+            return None
 
     # Compatibility shim for queue consumer (if it still exists and calls _scrape_item)
     async def _scrape_item(self, session, item_url: str) -> Optional[ScrapedItem]:
