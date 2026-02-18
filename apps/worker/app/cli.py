@@ -43,7 +43,7 @@ def _load_savee_auth_token() -> Optional[str]:
     try:
         base_dir = os.path.dirname(__file__)
         cookies_path = os.path.abspath(os.path.join(base_dir, '..', 'savee_cookies.json'))
-        with open(cookies_path, 'r', encoding='utf-8') as f:
+        with open(cookies_path, 'r', encoding='utf-8-sig') as f:
             cookies = json.load(f)
         for c in cookies:
             if c.get('name') == 'auth_token' and c.get('value'):

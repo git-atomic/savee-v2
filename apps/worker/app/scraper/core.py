@@ -18,6 +18,12 @@ from ..config import settings
 logger = setup_logging(__name__)
 
 
+def _json_loads_maybe_bom(text: str):
+    if isinstance(text, str):
+        text = text.lstrip("\ufeff")
+    return json.loads(text)
+
+
 class ScrapedItem(BaseModel):
     """Scraped item data structure with comprehensive metadata"""
     external_id: str
@@ -101,7 +107,9 @@ class SaveeSession:
         cookies_loaded = False
         if settings.COOKIES_JSON:
             try:
-                data = json.loads(settings.COOKIES_JSON)
+                data = _json_loads_maybe_bom(settings.COOKIES_JSON)
+                if isinstance(data, dict) and 'cookies' in data:
+                    data = data['cookies']
                 # Accept both Chrome-exported list and simple name/value mapping
                 if isinstance(data, list):
                     for c in data:
@@ -133,8 +141,10 @@ class SaveeSession:
 
         if not cookies_loaded and settings.COOKIES_PATH:
             try:
-                with open(settings.COOKIES_PATH, 'r', encoding='utf-8') as f:
+                with open(settings.COOKIES_PATH, 'r', encoding='utf-8-sig') as f:
                     data = json.load(f)
+                if isinstance(data, dict) and 'cookies' in data:
+                    data = data['cookies']
                 if isinstance(data, list):
                     for c in data:
                         if 'name' in c and 'value' in c:
@@ -170,7 +180,9 @@ class SaveeSession:
                 from pathlib import Path as _Path
                 default_cookie_file = _Path(__file__).resolve().parents[2] / 'savee_cookies.json'
                 if default_cookie_file.exists():
-                    data = json.loads(default_cookie_file.read_text(encoding='utf-8'))
+                    data = _json_loads_maybe_bom(default_cookie_file.read_text(encoding='utf-8-sig'))
+                    if isinstance(data, dict) and 'cookies' in data:
+                        data = data['cookies']
                     if isinstance(data, list):
                         for c in data:
                             if 'name' in c and 'value' in c:

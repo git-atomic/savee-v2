@@ -19,6 +19,12 @@ from .core import ScrapedItem
 logger = setup_logging(__name__)
 
 # --- Auth/session helpers (adapted from savee_scraper.py) ---
+def _json_loads_maybe_bom(text: str):
+    if isinstance(text, str):
+        text = text.lstrip("\ufeff")
+    return json.loads(text)
+
+
 def _normalize_cookie_entry(entry: dict) -> Optional[dict]:
     try:
         name = entry.get('name')
@@ -67,7 +73,7 @@ def _normalize_cookie_entry(entry: dict) -> Optional[dict]:
 
 def _load_cookies_from_json_text(text: str) -> Optional[list]:
     try:
-        data = json.loads(text)
+        data = _json_loads_maybe_bom(text)
         if isinstance(data, dict) and 'cookies' in data:
             raw = data['cookies']
         else:
@@ -95,14 +101,14 @@ def load_cookies_from_env() -> Optional[list]:
     cp = settings.COOKIES_PATH
     if cp and os.path.exists(cp):
         try:
-            return _load_cookies_from_json_text(Path(cp).read_text(encoding='utf-8'))
+            return _load_cookies_from_json_text(Path(cp).read_text(encoding='utf-8-sig'))
         except Exception:
             return None
     # Fallback: use repo default file if present (handles wrong COOKIES_PATH like container paths)
     try:
         default_cookie_file = Path(__file__).resolve().parents[2] / 'savee_cookies.json'
         if default_cookie_file.exists():
-            return _load_cookies_from_json_text(default_cookie_file.read_text(encoding='utf-8'))
+            return _load_cookies_from_json_text(default_cookie_file.read_text(encoding='utf-8-sig'))
     except Exception:
         pass
     return None
