@@ -175,18 +175,18 @@ export function AddJobForm() {
   return (
     <form onSubmit={handleSubmit} className="flex flex-col h-full w-full">
       <div className="flex flex-1 overflow-hidden border-t border-border">
-        {/* Left Panel - NOT scrollable */}
-        <div className="flex flex-col flex-1 border-r border-border overflow-hidden bg-background min-w-0">
-          <div className="flex-1 flex flex-col p-6 gap-6">
-            <div className="flex-1 flex flex-col min-h-0">
-              <JobTextarea
-                value={input}
-                onChange={setInput}
-                className="flex-1"
-                disabled={isSubmitting}
-              />
-            </div>
-            <div className="flex justify-center shrink-0">
+        {/* Left Panel */}
+        <div className="flex flex-col flex-1 border-r border-border overflow-hidden bg-background min-w-0 min-h-0">
+          <div className="flex-1 min-h-0 p-6 pb-3">
+            <JobTextarea
+              value={input}
+              onChange={setInput}
+              className="h-full min-h-0 max-h-full overflow-y-auto"
+              disabled={isSubmitting}
+            />
+          </div>
+          <div className="shrink-0 border-t border-border/60 bg-background p-6 pt-4">
+            <div className="flex justify-center">
               <Button
                 type="submit"
                 disabled={!isFormValid || isSubmitting}

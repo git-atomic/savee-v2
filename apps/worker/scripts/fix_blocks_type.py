@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
-Migration script to fix old jobs that were created before the "blocks" type was implemented.
+Migration script to fix mis-typed sources that should be "blocks".
 
-This script identifies sources with source_type='home' that contain blocks with /i/ URLs
-and updates them to source_type='blocks' with appropriate placeholder URLs.
+It catches old rows that were created as "home" or "user", plus bulk placeholder
+rows like "bulk_import_*", then updates them to source_type="blocks".
 """
 import asyncio
 import argparse
@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 # Add the app directory to Python path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy import select, update, text
+from sqlalchemy import update, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.config import settings
 from app.models.sources import Source, SourceTypeEnum
@@ -23,22 +23,36 @@ from app.models.sources import Source, SourceTypeEnum
 
 async def find_sources_to_fix(session: AsyncSession) -> List[Dict[str, Any]]:
     """
-    Find sources that should be blocks type but are currently marked as 'home'.
+    Find sources that should be blocks type but are currently mis-typed.
     
     Criteria:
-    - source_type = 'home'
-    - Has at least one block with a URL containing '/i/'
+    - source_type is 'home' or 'user'
+    - and source URL/username clearly indicates blocks-style source:
+      - source URL contains '/i/'
+      - source URL contains bulk_import_
+      - source username is bulk_import_*
     
     Returns list of dicts with source info.
     """
-    # Query to find sources that match our criteria
     query = text("""
-        SELECT DISTINCT s.id, s.url, s.source_type, COUNT(b.id) as block_count
+        SELECT
+            s.id,
+            s.url,
+            s.username,
+            s.source_type,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM blocks b
+                WHERE b.source_id = s.id
+                  AND b.url LIKE '%/i/%'
+            ), 0) AS block_count
         FROM sources s
-        INNER JOIN blocks b ON b.source_id = s.id
-        WHERE s.source_type = 'home'
-        AND b.url LIKE '%/i/%'
-        GROUP BY s.id, s.url, s.source_type
+        WHERE s.source_type IN ('home', 'user')
+          AND (
+            LOWER(COALESCE(s.url, '')) LIKE '%/i/%'
+            OR LOWER(COALESCE(s.url, '')) LIKE '%bulk_import_%'
+            OR LOWER(COALESCE(s.username, '')) LIKE 'bulk_import_%'
+          )
         ORDER BY s.id
     """)
     
@@ -50,8 +64,9 @@ async def find_sources_to_fix(session: AsyncSession) -> List[Dict[str, Any]]:
         sources.append({
             'id': row[0],
             'url': row[1],
-            'source_type': row[2],
-            'block_count': row[3]
+            'username': row[2],
+            'source_type': row[3],
+            'block_count': row[4]
         })
     
     return sources
@@ -77,6 +92,8 @@ async def update_source_to_blocks(
     session: AsyncSession,
     source_id: int,
     current_url: str,
+    current_type: str,
+    current_username: str | None,
     dry_run: bool = False
 ) -> bool:
     """
@@ -97,11 +114,15 @@ async def update_source_to_blocks(
     
     if dry_run:
         print(f"  [DRY RUN] Would update source {source_id}:")
-        print(f"    - source_type: 'home' -> 'blocks'")
+        print(f"    - source_type: '{current_type}' -> 'blocks'")
+        if current_username:
+            print(f"    - username: '{current_username}' -> null")
         if needs_url_update:
             print(f"    - url: '{current_url}' -> '{new_url}'")
         else:
             print(f"    - url: '{current_url}' (no change needed)")
+        if current_username and current_username.lower().startswith("bulk_import_"):
+            print(f"    - would delete stale savee_users row: '{current_username}'")
         return True
     
     # Update the source
@@ -110,17 +131,29 @@ async def update_source_to_blocks(
         .where(Source.id == source_id)
         .values(
             source_type=SourceTypeEnum.blocks,
+            username=None,
             url=new_url
         )
     )
     
     await session.execute(stmt)
+
+    if current_username and current_username.lower().startswith("bulk_import_"):
+        await session.execute(
+            text("DELETE FROM savee_users WHERE username = :username"),
+            {"username": current_username},
+        )
+
     await session.commit()
     
     print(f"  [OK] Updated source {source_id}:")
-    print(f"    - source_type: 'home' -> 'blocks'")
+    print(f"    - source_type: '{current_type}' -> 'blocks'")
+    if current_username:
+        print(f"    - username: '{current_username}' -> null")
     if needs_url_update:
         print(f"    - url: '{current_url}' -> '{new_url}'")
+    if current_username and current_username.lower().startswith("bulk_import_"):
+        print(f"    - deleted stale savee_users row for username '{current_username}'")
     
     return True
 
@@ -161,11 +194,15 @@ async def main(dry_run: bool = False):
             for source in sources_to_fix:
                 source_id = source['id']
                 current_url = source['url']
+                current_username = source.get('username')
+                current_type = source['source_type']
                 block_count = source['block_count']
                 
                 print(f"Source ID: {source_id}")
-                print(f"  Current type: {source['source_type']}")
+                print(f"  Current type: {current_type}")
                 print(f"  Current URL: {current_url}")
+                if current_username:
+                    print(f"  Current username: {current_username}")
                 print(f"  Blocks with /i/ URLs: {block_count}")
                 
                 # Show sample URLs
@@ -182,6 +219,8 @@ async def main(dry_run: bool = False):
                     session,
                     source_id,
                     current_url,
+                    current_type,
+                    current_username,
                     dry_run=dry_run
                 )
                 
@@ -210,7 +249,7 @@ async def main(dry_run: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Fix old jobs with wrong source_type (home -> blocks)"
+        description="Fix old jobs with wrong source_type (home/user -> blocks)"
     )
     parser.add_argument(
         "--dry-run",

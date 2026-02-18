@@ -231,8 +231,8 @@ async def _get_item_existing_block_info(
 def _detect_source_type(url: str) -> SourceTypeEnum:
     """Detect source type from URL.
     
-    Note: For existing sources, use _detect_source_type_from_blocks() as a fallback
-    to check if a source should be 'blocks' type based on its associated blocks.
+    For legacy rows, create_or_get_source() may still normalize old mis-typed
+    entries based on source URL patterns.
     """
     if not url:
         return SourceTypeEnum.user
@@ -241,6 +241,10 @@ def _detect_source_type(url: str) -> SourceTypeEnum:
     
     # Detect bulk imports (generated URLs for bulk jobs)
     if 'bulk_import_' in u:
+        return SourceTypeEnum.blocks
+
+    # Direct block/item URL
+    if "savee.com/i/" in u or "savee.it/i/" in u:
         return SourceTypeEnum.blocks
     
     # Support both savee.it and savee.com domains
@@ -255,25 +259,36 @@ def _detect_source_type(url: str) -> SourceTypeEnum:
 
 async def _detect_source_type_from_blocks(session: AsyncSession, source_id: int) -> SourceTypeEnum | None:
     """
-    Fallback detection: Check if a source should be 'blocks' type by examining its blocks.
+    Legacy fallback detection for already-created sources.
     
-    Returns SourceTypeEnum.blocks if the source has blocks with /i/ URLs, None otherwise.
-    This is useful for correcting sources that were created before the blocks type existed.
+    Returns SourceTypeEnum.blocks only when source URL/username clearly indicates
+    a blocks placeholder or direct /i/ source. We intentionally avoid inferring
+    from the blocks table because user/home sources also contain /i/ block URLs.
     """
     from sqlalchemy import text
     
     query = text("""
-        SELECT COUNT(*) 
-        FROM blocks 
-        WHERE source_id = :source_id 
-        AND url LIKE '%/i/%'
+        SELECT
+          LOWER(COALESCE(url, '')) AS url,
+          LOWER(COALESCE(username, '')) AS username
+        FROM sources
+        WHERE id = :source_id
         LIMIT 1
     """)
     
     result = await session.execute(query, {'source_id': source_id})
-    count = result.scalar()
+    row = result.first()
+    if not row:
+        return None
+
+    source_url = row[0] or ""
+    source_username = row[1] or ""
     
-    if count and count > 0:
+    if (
+        "bulk_import_" in source_url
+        or "/i/" in source_url
+        or source_username.startswith("bulk_import_")
+    ):
         return SourceTypeEnum.blocks
     return None
 
@@ -967,10 +982,13 @@ async def create_or_get_source(session: AsyncSession, url: str) -> int:
         # Fallback detection: if a source behaves like bulk/blocks, keep it as blocks.
         if source.source_type in [SourceTypeEnum.home, SourceTypeEnum.user]:
             source_url = (source.url or "").lower()
+            source_username = (source.username or "").lower()
             detected_type = await _detect_source_type_from_blocks(session, source.id)
             should_be_blocks = (
                 detected_type == SourceTypeEnum.blocks
                 or "bulk_import_" in source_url
+                or "/i/" in source_url
+                or source_username.startswith("bulk_import_")
             )
             if should_be_blocks:
                 logger.info(

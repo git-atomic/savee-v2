@@ -26,7 +26,7 @@ export function JobTextarea({
       placeholder={placeholder}
       disabled={disabled}
       className={cn(
-        "min-h-64 w-full resize-none flex-1 border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none",
+        "min-h-64 w-full resize-none flex-1 overflow-y-auto border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none",
         className
       )}
     />
