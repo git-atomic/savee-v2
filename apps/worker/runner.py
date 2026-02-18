@@ -5,12 +5,23 @@ import json
 import subprocess
 from typing import Any, Dict, List
 from dotenv import load_dotenv
+import re
 
 # Load environment variables from .env and .env.local
 load_dotenv()
 load_dotenv(".env.local", override=True)
 
-CMS_URL = os.getenv("CMS_URL", "").rstrip("/")
+def _normalize_cms_base_url(raw_url: str) -> str:
+    if not raw_url:
+        return ""
+    u = raw_url.strip()
+    u = re.sub(r"/+$", "", u, flags=re.IGNORECASE)
+    u = re.sub(r"/admin$", "", u, flags=re.IGNORECASE)
+    u = re.sub(r"/api$", "", u, flags=re.IGNORECASE)
+    return u
+
+
+CMS_URL = _normalize_cms_base_url(os.getenv("CMS_URL", ""))
 ENGINE_MONITOR_TOKEN = os.getenv("ENGINE_MONITOR_TOKEN") or os.getenv("ENGINE_MONITOR_BEARER")
 POLL_INTERVAL_SEC = int(os.getenv("RUNNER_POLL_INTERVAL_SEC", "20"))
 MAX_PARALLEL = int(os.getenv("RUNNER_MAX_PARALLEL", os.getenv("JOB_CONCURRENCY", "2")))

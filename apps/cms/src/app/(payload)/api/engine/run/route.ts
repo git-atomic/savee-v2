@@ -5,6 +5,8 @@ import { parseSaveeUrl } from "../../../../../lib/url-utils";
 import { spawn } from "child_process";
 import path from "path";
 
+const STALE_PENDING_MINUTES = 15;
+
 interface SourceData {
   url: string;
   sourceType: "home" | "pop" | "user" | "blocks";
@@ -115,14 +117,52 @@ export async function POST(request: NextRequest) {
     // Guard: if there's already an active run, do not start another
     const pool: any = (payload.db as any).pool;
     const existingActive = await pool.query(
-      `SELECT id FROM runs WHERE source_id = $1 AND status IN ('running','paused','pending') ORDER BY created_at DESC LIMIT 1`,
+      `SELECT id, status, updated_at, created_at
+       FROM runs
+       WHERE source_id = $1 AND status IN ('running','paused','pending')
+       ORDER BY created_at DESC LIMIT 1`,
       [sourceId]
     );
     if (existingActive.rows.length > 0) {
-      return NextResponse.json(
-        { success: false, error: "Run already active for this source" },
-        { status: 409 }
-      );
+      const active = existingActive.rows[0] as {
+        id: number;
+        status: string;
+        updated_at?: string | Date | null;
+        created_at?: string | Date | null;
+      };
+      const refTs = active.updated_at || active.created_at;
+      const ageMs = refTs ? Date.now() - new Date(refTs).getTime() : 0;
+      const stalePending =
+        active.status === "pending" &&
+        ageMs > STALE_PENDING_MINUTES * 60 * 1000;
+      if (stalePending) {
+        await pool.query(
+          `UPDATE runs
+           SET status = 'error',
+               error_message = $1,
+               completed_at = now(),
+               updated_at = now()
+           WHERE id = $2`,
+          [
+            `Auto-expired stale pending run after ${STALE_PENDING_MINUTES} minutes without dispatch`,
+            active.id,
+          ]
+        );
+      } else {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              active.status === "pending"
+                ? "Previous run is still pending. Wait a bit or use Run Now with force."
+                : "Run already active for this source",
+          },
+          { status: 409 }
+        );
+      }
+    }
+    if (existingActive.rows.length > 0) {
+      // Existing row was stale pending and has just been expired; continue startup.
     }
 
     // Try to reuse the latest completed/error run for this source to avoid duplicates

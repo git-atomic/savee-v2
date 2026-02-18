@@ -6,6 +6,7 @@ import path from "path";
 
 // Process tracking for pause/resume functionality
 const runningProcesses = new Map<string, ChildProcess>();
+const STALE_PENDING_MINUTES = 15;
 
 // Database connection for direct SQL queries
 async function getDbConnection() {
@@ -344,13 +345,40 @@ export async function POST(request: NextRequest) {
 
         // Check if there's already a running/paused/pending run in DB
         const activeRun = await db.query(
-          `SELECT id, status FROM runs WHERE source_id = $1 AND status IN ('running','paused','pending')
+          `SELECT id, status, updated_at, created_at
+           FROM runs
+           WHERE source_id = $1 AND status IN ('running','paused','pending')
              ORDER BY created_at DESC LIMIT 1`,
           [sourceId]
         );
         if (activeRun.rows.length > 0) {
-          const existing = activeRun.rows[0];
+          const existing = activeRun.rows[0] as {
+            id: number;
+            status: string;
+            updated_at?: string | Date | null;
+            created_at?: string | Date | null;
+          };
           const existingStatus = existing.status as string;
+          const refTs = existing.updated_at || existing.created_at;
+          const ageMs = refTs ? Date.now() - new Date(refTs).getTime() : 0;
+          const stalePending =
+            existingStatus === "pending" &&
+            ageMs > STALE_PENDING_MINUTES * 60 * 1000;
+
+          if (stalePending) {
+            await db.query(
+              `UPDATE runs
+               SET status = 'error',
+                   error_message = $1,
+                   completed_at = now(),
+                   updated_at = now()
+               WHERE id = $2`,
+              [
+                `Auto-expired stale pending run after ${STALE_PENDING_MINUTES} minutes without dispatch`,
+                existing.id,
+              ]
+            );
+          } else 
           // Reuse pending; if running/paused and not forcing, return idempotent success
           if (existingStatus === "pending") {
             runId = existing.id;

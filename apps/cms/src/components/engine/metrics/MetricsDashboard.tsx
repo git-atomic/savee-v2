@@ -100,7 +100,7 @@ export function MetricsDashboard() {
 
   const fetchMetrics = async () => {
     try {
-      const response = await fetch("/api/engine/metrics");
+      const response = await fetch("/api/engine/metrics", { cache: "no-store" });
       const data = await response.json();
       if (data.success) {
         setMetrics(data);
@@ -113,9 +113,25 @@ export function MetricsDashboard() {
   };
 
   useEffect(() => {
-    fetchMetrics();
-    const interval = setInterval(fetchMetrics, 30000); // Refresh every 30 seconds
-    return () => clearInterval(interval);
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const onVisibility = () => {
+      if (!document.hidden) {
+        void fetchMetrics();
+        if (interval) clearInterval(interval);
+        interval = setInterval(() => {
+          void fetchMetrics();
+        }, 60000);
+      } else if (interval) {
+        clearInterval(interval);
+        interval = undefined;
+      }
+    };
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      if (interval) clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, []);
 
   if (loading) {

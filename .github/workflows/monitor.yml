@@ -78,8 +78,8 @@ jobs:
           SOURCE_ID: ${{ github.event.inputs.sourceId || github.event.client_payload.sourceId }}
           SEED_URL: ${{ secrets.SEED_URL }}
         run: |
-          # Normalize provided URLs to avoid trailing /admin or / paths
-          norm() { echo "$1" | sed -E 's#/+$##' | sed -E 's#/admin$##'; }
+          # Normalize provided URLs to avoid trailing /admin, /api, or / paths
+          norm() { echo "$1" | sed -E 's#/+$##' | sed -E 's#/admin$##' | sed -E 's#/api$##'; }
           CMS_BASE=$(norm "$CMS_URL")
           MON_BASE=$(norm "$MONITOR_URL")
 

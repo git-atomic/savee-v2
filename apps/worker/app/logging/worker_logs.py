@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 import aiohttp
-from app.config import settings
+from app.config import settings, normalize_cms_base_url
 
 try:
     import aioredis
@@ -120,7 +120,9 @@ async def _send_log_to_cms(run_id: int, log_data: Dict):
     """Send log entry to CMS API for real-time display"""
     try:
         # Determine CMS URL
-        cms_url = getattr(settings, 'CMS_URL', 'http://localhost:3000')
+        cms_url = normalize_cms_base_url(getattr(settings, 'CMS_URL', 'http://localhost:3000'))
+        if not cms_url:
+            return
         
         async with aiohttp.ClientSession() as session:
             async with session.post(

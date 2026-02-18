@@ -19,7 +19,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.sql import func
 
-from app.config import settings
+from app.config import settings, normalize_cms_base_url
 from app.logging_config import setup_logging
 from app.logging import log_starting, log_fetch, log_scrape, log_upload, log_write, log_error, log_complete
 import aiohttp
@@ -280,7 +280,7 @@ async def _detect_source_type_from_blocks(session: AsyncSession, source_id: int)
 async def _send_simple_log_to_cms(run_id: int, log_data: dict):
     """Send log entry to CMS API for real-time display"""
     try:
-        cms_url = getattr(settings, 'CMS_URL', None) or os.getenv('CMS_URL') or ""
+        cms_url = normalize_cms_base_url(getattr(settings, 'CMS_URL', None) or os.getenv('CMS_URL') or "")
         if not cms_url:
             return
         token = getattr(settings, 'ENGINE_MONITOR_TOKEN', None) or os.getenv('ENGINE_MONITOR_TOKEN')
@@ -292,7 +292,7 @@ async def _send_simple_log_to_cms(run_id: int, log_data: dict):
         try:
             async with aiohttp.ClientSession(headers=headers) as session:
                 async with session.post(
-                    f"{cms_url.rstrip('/')}/api/engine/logs",
+                    f"{cms_url}/api/engine/logs",
                     json={"jobId": str(run_id), "log": log_data},
                     timeout=aiohttp.ClientTimeout(total=5)
                 ) as resp:
@@ -1319,11 +1319,11 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
             # Capacity guard helpers
             async def _get_limits() -> Optional[dict]:
                 try:
-                    cms_url = getattr(settings, 'CMS_URL', None) or os.getenv('CMS_URL') or ""
+                    cms_url = normalize_cms_base_url(getattr(settings, 'CMS_URL', None) or os.getenv('CMS_URL') or "")
                     if not cms_url:
                         return None
                     async with aiohttp.ClientSession() as s:
-                        async with s.get(f"{cms_url.rstrip('/')}/api/engine/limits", timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        async with s.get(f"{cms_url}/api/engine/limits", timeout=aiohttp.ClientTimeout(total=10)) as resp:
                             if resp.status == 200:
                                 return await resp.json()
                 except Exception:

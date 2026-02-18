@@ -364,3 +364,16 @@ settings = Settings()
 def get_settings() -> Settings:
     """Get application settings (dependency injection compatible)"""
     return settings
+
+
+def normalize_cms_base_url(raw_url: Optional[str]) -> str:
+    """Normalize CMS URL to bare origin/path (no trailing /admin or /api)."""
+    if not raw_url:
+        return ""
+    u = raw_url.strip()
+    if not u:
+        return ""
+    u = re.sub(r"/+$", "", u, flags=re.IGNORECASE)
+    u = re.sub(r"/admin$", "", u, flags=re.IGNORECASE)
+    u = re.sub(r"/api$", "", u, flags=re.IGNORECASE)
+    return u

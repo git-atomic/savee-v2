@@ -184,6 +184,12 @@ export function JobsList() {
   const [processingJobs, setProcessingJobs] = React.useState<Set<string>>(
     new Set()
   );
+  const isFetchingRef = React.useRef(false);
+  const jobsRef = React.useRef<JobData[]>([]);
+
+  React.useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
 
   // Calculate stats
   const stats = React.useMemo<JobsStats>(() => {
@@ -214,6 +220,10 @@ export function JobsList() {
   // Fetch jobs
   const fetchJobs = React.useCallback(
     async (showRefreshIndicator = false) => {
+      if (isFetchingRef.current) {
+        return;
+      }
+      isFetchingRef.current = true;
       if (showRefreshIndicator) {
         setIsRefreshing(true);
       }
@@ -227,42 +237,61 @@ export function JobsList() {
           throw new Error("Failed to fetch jobs");
         }
       } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Failed to fetch jobs"
-        );
+        if (showRefreshIndicator) {
+          toast.error(
+            error instanceof Error ? error.message : "Failed to fetch jobs"
+          );
+        }
       } finally {
+        isFetchingRef.current = false;
         setIsLoading(false);
         if (showRefreshIndicator) {
           setIsRefreshing(false);
         }
       }
     },
-    [toast]
+    []
   );
 
-  // Initial load and polling (throttled, and paused in background)
+  // Initial load and adaptive polling (slower when idle, paused in background)
   React.useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | undefined;
-    let isPageVisible = true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
 
-    const handleVisibilityChange = () => {
-      isPageVisible = !document.hidden;
+    const runTick = async () => {
+      if (stopped || document.hidden) {
+        return;
+      }
+      await fetchJobs();
+      const hasActive = jobsRef.current.some(
+        (j) => j.status === "running" || j.status === "queued" || j.runStatus === "running"
+      );
+      const nextMs = hasActive ? 15000 : 45000;
+      timeout = setTimeout(() => {
+        void runTick();
+      }, nextMs);
     };
 
     // Initial load
-    fetchJobs();
+    void fetchJobs();
+    timeout = setTimeout(() => {
+      void runTick();
+    }, 15000);
 
-    // Poll every 5s while tab is visible
-    interval = setInterval(() => {
-      if (isPageVisible) {
-        fetchJobs();
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        if (timeout) clearTimeout(timeout);
+        timeout = setTimeout(() => {
+          void runTick();
+        }, 1000);
       }
-    }, 5000);
+    };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      if (interval) clearInterval(interval);
+      stopped = true;
+      if (timeout) clearTimeout(timeout);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [fetchJobs]);

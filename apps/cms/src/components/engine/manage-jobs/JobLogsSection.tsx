@@ -33,18 +33,30 @@ export const JobLogsSection = React.memo(function JobLogsSection({
   const esRef = React.useRef<EventSource | null>(null);
   const pollRef = React.useRef<NodeJS.Timeout | null>(null);
   const reconnectRef = React.useRef<NodeJS.Timeout | null>(null);
+  const snapshotInFlightRef = React.useRef(false);
+
+  const stopPolling = React.useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
   const fetchSnapshot = React.useCallback(async (runId?: string) => {
     if (!runId) {
+      return;
+    }
+    if (snapshotInFlightRef.current) {
       return;
     }
     const runIdNum = typeof runId === "string" ? parseInt(runId, 10) : runId;
     if (!Number.isFinite(runIdNum)) {
       return;
     }
+    snapshotInFlightRef.current = true;
     try {
       const res = await fetch(
-        `/api/engine/logs?runId=${encodeURIComponent(runIdNum)}`,
+        `/api/engine/logs?runId=${encodeURIComponent(runIdNum)}&limit=180`,
         { cache: "no-store" }
       );
       if (res.ok) {
@@ -54,8 +66,20 @@ export const JobLogsSection = React.memo(function JobLogsSection({
       }
     } catch (error) {
       // Silently handle errors
+    } finally {
+      snapshotInFlightRef.current = false;
     }
   }, []);
+
+  const startFallbackPolling = React.useCallback(
+    (targetRunId?: string) => {
+      if (!targetRunId || pollRef.current) return;
+      pollRef.current = setInterval(() => {
+        void fetchSnapshot(targetRunId);
+      }, 20000);
+    },
+    [fetchSnapshot]
+  );
 
   const attachStream = React.useCallback((runId?: string) => {
     if (!runId) return;
@@ -75,19 +99,30 @@ export const JobLogsSection = React.memo(function JobLogsSection({
         `/api/engine/logs/stream?runId=${encodeURIComponent(runId)}`
       );
       esRef.current = es;
+      stopPolling();
       const push = (p: any) => {
         if (!p || !p.type) return;
-        setLogs((prev) => [
-          ...prev,
-          {
-            timestamp: p.timestamp || new Date().toISOString(),
-            type: p.type,
-            url: p.url || "",
-            status: p.status || "",
-            timing: p.timing,
-            message: p.message,
-          },
-        ]);
+        const nextEntry = {
+          timestamp: p.timestamp || new Date().toISOString(),
+          type: p.type,
+          url: p.url || "",
+          status: p.status || "",
+          timing: p.timing,
+          message: p.message,
+        };
+        setLogs((prev) => {
+          const last = prev[prev.length - 1];
+          if (
+            last &&
+            last.timestamp === nextEntry.timestamp &&
+            last.type === nextEntry.type &&
+            last.url === nextEntry.url &&
+            last.message === nextEntry.message
+          ) {
+            return prev;
+          }
+          return [...prev, nextEntry].slice(-500);
+        });
       };
       es.onmessage = (ev) => {
         try {
@@ -105,15 +140,16 @@ export const JobLogsSection = React.memo(function JobLogsSection({
           es.close();
         } catch {}
         esRef.current = null;
+        startFallbackPolling(runId);
         if (reconnectRef.current) {
           clearTimeout(reconnectRef.current);
         }
-        reconnectRef.current = setTimeout(() => attachStream(runId), 2000);
+        reconnectRef.current = setTimeout(() => attachStream(runId), 5000);
       };
     } catch (error) {
       // Silently handle errors
     }
-  }, []);
+  }, [startFallbackPolling, stopPolling]);
 
   const refreshLogs = React.useCallback(async () => {
     if (!runId) return;
@@ -123,18 +159,12 @@ export const JobLogsSection = React.memo(function JobLogsSection({
 
   React.useEffect(() => {
     if (isOpen && runId) {
-      fetchSnapshot(runId);
+      setLogs([]);
+      void fetchSnapshot(runId);
       attachStream(runId);
-      // Also poll periodically as a safety net and after run completes.
-      // Keep this gentle (every 5s) to avoid excessive load.
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(() => fetchSnapshot(runId as string), 5000);
     }
     return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      stopPolling();
       if (reconnectRef.current) {
         clearTimeout(reconnectRef.current);
         reconnectRef.current = null;
@@ -146,7 +176,7 @@ export const JobLogsSection = React.memo(function JobLogsSection({
         esRef.current = null;
       }
     };
-  }, [isOpen, runId, fetchSnapshot, attachStream]);
+  }, [isOpen, runId, fetchSnapshot, attachStream, stopPolling]);
 
   React.useEffect(() => {
     if (!isOpen || !autoFollow) return;

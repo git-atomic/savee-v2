@@ -63,7 +63,7 @@ jobs:
           MONITOR_URL: ${{ secrets.MONITOR_URL }}
           ENGINE_MONITOR_TOKEN: ${{ secrets.ENGINE_MONITOR_TOKEN }}
         run: |
-          norm() { echo "$1" | sed -E 's#/+$##' | sed -E 's#/admin$##'; }
+          norm() { echo "$1" | sed -E 's#/+$##' | sed -E 's#/admin$##' | sed -E 's#/api$##'; }
           CMS_BASE=$(norm "$CMS_URL")
           MON_BASE=$(norm "$MONITOR_URL")
           URL=""

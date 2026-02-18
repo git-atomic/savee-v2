@@ -5,6 +5,17 @@ import sys
 import time
 import urllib.request
 import urllib.error
+import re
+
+
+def normalize_cms_base_url(raw_url: str) -> str:
+    if not raw_url:
+        return ""
+    u = raw_url.strip()
+    u = re.sub(r"/+$", "", u, flags=re.IGNORECASE)
+    u = re.sub(r"/admin$", "", u, flags=re.IGNORECASE)
+    u = re.sub(r"/api$", "", u, flags=re.IGNORECASE)
+    return u
 
 
 def main() -> int:
@@ -16,7 +27,7 @@ def main() -> int:
         data = json.load(f)
     runs = data.get("startedDetails") or []
     # Merge with /api/engine/pending for robustness
-    cms_url = os.environ.get("CMS_URL", "").rstrip("/")
+    cms_url = normalize_cms_base_url(os.environ.get("CMS_URL", ""))
     token = os.environ.get("ENGINE_MONITOR_TOKEN", "")
     if cms_url:
         try:
@@ -48,7 +59,7 @@ def main() -> int:
     procs = []
 
     def post_log(run_id: str, log: dict) -> None:
-        cms = os.environ.get("CMS_URL", "").rstrip("/")
+        cms = normalize_cms_base_url(os.environ.get("CMS_URL", ""))
         if not cms or not run_id:
             return
         token = os.environ.get("ENGINE_MONITOR_TOKEN", "")
@@ -152,5 +163,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
