@@ -247,7 +247,9 @@ out/
 
 # Allow specific cms src directories to be committed
 !apps/cms/src/lib/
-!apps/cms/src/app/api/engine/**
+!apps/cms/src/app/(payload)/api/engine/**
+!apps/cms/src/app/(payload)/api/engine/logs/
+!apps/cms/src/app/(payload)/api/engine/logs/**
 !apps/web/lib/
 
 # Nuxt.js build / generate output
@@ -295,6 +297,8 @@ Thumbs.db
 # Logs
 logs/
 *.log
+!apps/cms/src/app/(payload)/api/engine/logs/
+!apps/cms/src/app/(payload)/api/engine/logs/**
 
 # Development/test files
 test_*.py

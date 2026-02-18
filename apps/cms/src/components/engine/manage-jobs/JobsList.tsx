@@ -201,7 +201,7 @@ export function JobsList() {
     const paused = jobs.filter((j) => j.status === "paused").length;
     const stopped = jobs.filter((j) => j.status === "stopped").length;
     const error = jobs.filter(
-      (j) => j.status === "error" || (j.counters?.errors || 0) > 0
+      (j) => j.status === "error" || j.runStatus === "error"
     ).length;
     const completed = jobs.filter((j) => j.status === "completed").length;
 
