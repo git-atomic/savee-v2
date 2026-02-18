@@ -62,6 +62,13 @@ jobs:
             # Skip strict validation; worker tolerates missing/invalid cookies
           fi
 
+      - name: Validate auth cookies
+        env:
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+          COOKIES_PATH: ${{ secrets.COOKIES_PATH }}
+        run: |
+          python apps/worker/scripts/cookie_health.py --strict
+
       - name: Call /api/engine/monitor (manual trigger)
         env:
           CMS_URL: ${{ secrets.CMS_URL }}

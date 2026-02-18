@@ -39,6 +39,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Validate auth cookies
+        env:
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+          COOKIES_PATH: ${{ secrets.COOKIES_PATH }}
+        run: |
+          python apps/worker/scripts/cookie_health.py --strict
+
       - name: Run worker
         working-directory: apps/worker
         env:
