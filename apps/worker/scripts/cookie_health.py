@@ -114,6 +114,10 @@ def main() -> int:
     auth = next((c for c in usable if c.get("name") == "auth_token"), None)
     if not auth:
         print("auth_token=missing")
+        print(
+            "hint=Set COOKIES_JSON (secret or variable) with exported savee cookie JSON, "
+            "or set COOKIES_PATH to a valid cookie file path."
+        )
         return 1 if args.strict else 0
 
     token = str(auth.get("value") or "")
@@ -146,4 +150,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

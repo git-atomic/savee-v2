@@ -55,7 +55,7 @@ jobs:
 
       - name: Prepare cookies file (optional)
         env:
-          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON || secrets.SAVEE_COOKIES_JSON || vars.COOKIES_JSON || vars.SAVEE_COOKIES_JSON }}
         run: |
           if [ -n "$COOKIES_JSON" ]; then
             printf "%s" "$COOKIES_JSON" > apps/worker/savee_cookies.json || true
@@ -64,8 +64,8 @@ jobs:
 
       - name: Validate auth cookies
         env:
-          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
-          COOKIES_PATH: ${{ secrets.COOKIES_PATH }}
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON || secrets.SAVEE_COOKIES_JSON || vars.COOKIES_JSON || vars.SAVEE_COOKIES_JSON }}
+          COOKIES_PATH: ${{ secrets.COOKIES_PATH || vars.COOKIES_PATH }}
         run: |
           python apps/worker/scripts/cookie_health.py --strict
 
@@ -123,8 +123,8 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_REGION: auto
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
-          COOKIES_PATH: ${{ secrets.COOKIES_PATH }}
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON || secrets.SAVEE_COOKIES_JSON || vars.COOKIES_JSON || vars.SAVEE_COOKIES_JSON }}
+          COOKIES_PATH: ${{ secrets.COOKIES_PATH || vars.COOKIES_PATH }}
           JOB_CONCURRENCY: ${{ secrets.JOB_CONCURRENCY }}
           ITEM_CONCURRENCY: ${{ secrets.ITEM_CONCURRENCY }}
           CMS_URL: ${{ secrets.CMS_URL }}
