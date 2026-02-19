@@ -24,6 +24,7 @@ interface R2Usage {
   nearLimit: boolean;
   sampled: boolean;
   sampledPages: number;
+  error?: string | null;
 }
 
 interface MetricsData {
@@ -51,6 +52,7 @@ interface MetricsData {
   };
   maintenance?: {
     retention?: {
+      available?: boolean;
       lastRunAt: string | null;
       prunedJobLogs7d: number;
       prunedRuns7d: number;
@@ -69,6 +71,7 @@ interface MetricsData {
     sampledPages?: number;
     hasSecondary?: boolean;
     secondaryIgnoredAsDuplicate?: boolean;
+    incomplete?: boolean;
     primary?: R2Usage;
     secondary?: R2Usage;
   };
@@ -107,29 +110,44 @@ function progressColor(percent: number, nearLimit: boolean) {
   return "#10b981";
 }
 
+function compactError(message: string | null | undefined, max = 120): string | null {
+  if (!message) return null;
+  const text = String(message).trim();
+  if (!text) return null;
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 function UsageLine({ label, usage, hint }: { label: string; usage: R2Usage; hint?: string }) {
+  const errorText = compactError(usage.error);
+  const showMetrics = usage.configured && !errorText;
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
         <span className="text-muted-foreground">{label}</span>
         <span className="font-semibold">
-          {usage.totalSizeGb.toFixed(2)} GB / {usage.softLimitGb.toFixed(2)} GB
+          {usage.configured
+            ? showMetrics
+              ? `${usage.totalSizeGb.toFixed(2)} GB / ${usage.softLimitGb.toFixed(2)} GB`
+              : "Scan error"
+            : "Not configured"}
         </span>
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-muted/50">
         <div
           className="h-full rounded-full transition-all duration-500"
           style={{
-            width: `${Math.min(100, usage.usagePercent)}%`,
+            width: `${showMetrics ? Math.min(100, usage.usagePercent) : 0}%`,
             backgroundColor: progressColor(usage.usagePercent, usage.nearLimit),
           }}
         />
       </div>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{usage.totalObjects.toLocaleString()} objects</span>
-        <span>{formatBytes(usage.totalSizeBytes)}</span>
+        <span>{showMetrics ? `${usage.totalObjects.toLocaleString()} objects` : "-"}</span>
+        <span>{showMetrics ? formatBytes(usage.totalSizeBytes) : "-"}</span>
       </div>
-      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+      {errorText ? <p className="text-xs text-red-500">Scan failed: {errorText}</p> : null}
+      {!errorText && hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
@@ -180,8 +198,8 @@ export function MetricsDashboard() {
   if (loading) {
     return (
       <div className="space-y-4 pb-8">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          {[1, 2, 3, 4, 5].map((n) => (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+          {[1, 2, 3, 4, 5, 6].map((n) => (
             <Card key={n} className="p-4">
               <Skeleton className="h-4 w-28" />
               <Skeleton className="mt-2 h-8 w-24" />
@@ -238,17 +256,18 @@ export function MetricsDashboard() {
   } satisfies ChartConfig;
 
   const fallbackPrimary: R2Usage = {
-    configured: true,
+    configured: false,
     bucket: null,
-    totalObjects: metrics.r2.totalObjects,
-    totalSizeBytes: metrics.r2.totalSizeBytes,
-    totalSizeGb: metrics.r2.totalSizeGb,
-    usagePercent: metrics.r2.usagePercent,
-    softLimitGb: metrics.r2.softLimitGb,
-    softLimitBytes: metrics.r2.softLimitBytes,
-    nearLimit: metrics.r2.nearLimit,
-    sampled: Boolean(metrics.r2.sampled),
-    sampledPages: metrics.r2.sampledPages ?? 0,
+    totalObjects: 0,
+    totalSizeBytes: 0,
+    totalSizeGb: 0,
+    usagePercent: 0,
+    softLimitGb: metrics.r2.softLimitGb || 9.5,
+    softLimitBytes: metrics.r2.softLimitBytes || 9.5 * 1024 * 1024 * 1024,
+    nearLimit: false,
+    sampled: false,
+    sampledPages: 0,
+    error: null,
   };
 
   const primary = metrics.r2.primary ?? fallbackPrimary;
@@ -266,14 +285,26 @@ export function MetricsDashboard() {
       nearLimit: false,
       sampled: false,
       sampledPages: 0,
+      error: null,
     } as R2Usage);
 
   const hasSecondary = Boolean(metrics.r2.hasSecondary && secondary.configured);
   const retention = metrics.maintenance?.retention;
+  const retentionAvailable = retention?.available ?? true;
+  const primaryError = compactError(primary.error);
+  const secondaryError = compactError(secondary.error);
+  const r2Incomplete = Boolean(metrics.r2.incomplete || primaryError || (hasSecondary && secondaryError));
+  const primarySampleHint = primary.sampled
+    ? `sampled (${primary.sampledPages} pages)`
+    : undefined;
+  const secondarySampleHint =
+    hasSecondary && secondary.sampled
+      ? `sampled (${secondary.sampledPages} pages)`
+      : undefined;
 
   return (
     <div className="space-y-4 pb-8">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <Card className="p-4">
           <p className="text-sm text-muted-foreground">Total Blocks</p>
           <p className="mt-1 text-2xl font-semibold">{metrics.db.total.blocks.toLocaleString()}</p>
@@ -297,17 +328,57 @@ export function MetricsDashboard() {
         </Card>
 
         <Card className="p-4">
-          <p className="text-sm text-muted-foreground">R2 Total Usage</p>
-          <p className="mt-1 text-2xl font-semibold">{metrics.r2.totalSizeGb.toFixed(2)} GB</p>
+          <p className="text-sm text-muted-foreground">Primary R2</p>
+          <p className="mt-1 text-2xl font-semibold">
+            {!primary.configured
+              ? "Inactive"
+              : primaryError
+                ? "Scan error"
+                : `${primary.totalSizeGb.toFixed(2)} GB`}
+          </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {metrics.r2.totalObjects.toLocaleString()} objects | {metrics.r2.usagePercent.toFixed(1)}% used
+            {!primary.configured
+              ? "Primary bucket not configured"
+              : primaryError
+                ? primaryError
+                : `${primary.totalObjects.toLocaleString()} objects | ${primary.usagePercent.toFixed(1)}% used`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {primary.bucket ? `Bucket: ${primary.bucket}` : "Bucket: primary"}
+          </p>
+        </Card>
+
+        <Card className="p-4">
+          <p className="text-sm text-muted-foreground">Secondary R2</p>
+          <p className="mt-1 text-2xl font-semibold">
+            {hasSecondary
+              ? secondaryError
+                ? "Scan error"
+                : `${secondary.totalSizeGb.toFixed(2)} GB`
+              : "Inactive"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {hasSecondary
+              ? secondaryError
+                ? secondaryError
+                : `${secondary.totalObjects.toLocaleString()} objects | ${secondary.usagePercent.toFixed(1)}% used`
+              : "No separate secondary target"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {hasSecondary && secondary.bucket
+              ? `Bucket: ${secondary.bucket}`
+              : "Bucket: -"}
           </p>
         </Card>
 
         <Card className="p-4">
           <p className="text-sm text-muted-foreground">Retention</p>
-          <p className="mt-1 text-2xl font-semibold">{formatDate(retention?.lastRunAt ?? null)}</p>
-          <p className="mt-1 text-xs text-muted-foreground">Last maintenance run</p>
+          <p className="mt-1 text-2xl font-semibold">
+            {retentionAvailable ? formatDate(retention?.lastRunAt ?? null) : "Unavailable"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {retentionAvailable ? "Last maintenance run" : "Retention metrics table not installed"}
+          </p>
         </Card>
       </div>
 
@@ -352,23 +423,21 @@ export function MetricsDashboard() {
         <Card className="p-6 space-y-4">
           <div>
             <h3 className="text-lg font-semibold">R2 Storage Breakdown</h3>
-            <p className="text-sm text-muted-foreground">Accurate primary/secondary usage</p>
+            <p className="text-sm text-muted-foreground">Primary and secondary buckets shown separately</p>
           </div>
 
-          <UsageLine label="Total" usage={{ ...primary, totalObjects: metrics.r2.totalObjects, totalSizeBytes: metrics.r2.totalSizeBytes, totalSizeGb: metrics.r2.totalSizeGb, usagePercent: metrics.r2.usagePercent, softLimitGb: metrics.r2.softLimitGb, softLimitBytes: metrics.r2.softLimitBytes, nearLimit: metrics.r2.nearLimit }} />
-
-          <div className="border-t border-border/60 pt-3">
-            <UsageLine
-              label={`Primary${primary.bucket ? ` (${primary.bucket})` : ""}`}
-              usage={primary}
-            />
-          </div>
+          <UsageLine
+            label={`Primary${primary.bucket ? ` (${primary.bucket})` : ""}`}
+            usage={primary}
+            hint={primarySampleHint}
+          />
 
           {hasSecondary ? (
             <div className="border-t border-border/60 pt-3">
               <UsageLine
                 label={`Secondary${secondary.bucket ? ` (${secondary.bucket})` : ""}`}
                 usage={secondary}
+                hint={secondarySampleHint}
               />
             </div>
           ) : (
@@ -379,15 +448,19 @@ export function MetricsDashboard() {
 
           {metrics.r2.secondaryIgnoredAsDuplicate ? (
             <p className="text-xs text-amber-500">
-              Secondary target matches primary, so it is ignored in totals to prevent double-counting.
+              Secondary target matches primary, so it is ignored to prevent double-counting.
             </p>
           ) : null}
 
-          {metrics.r2.sampled ? (
-            <p className="text-xs text-muted-foreground">
-              Scan is sampled ({metrics.r2.sampledPages ?? 0} pages). Increase `R2_METRICS_MAX_PAGES` for full-bucket counts.
+          {r2Incomplete ? (
+            <p className="text-xs text-red-500">
+              Some R2 metrics could not be scanned; values above may be partial.
             </p>
           ) : null}
+
+          <p className="text-xs text-muted-foreground">
+            Increase `R2_METRICS_MAX_PAGES` if you want full-bucket counts instead of sampled scans.
+          </p>
         </Card>
 
         <Card className="p-6 space-y-4">
@@ -400,19 +473,19 @@ export function MetricsDashboard() {
             <div className="rounded-md border p-3">
               <p className="text-xs text-muted-foreground">Pruned Logs</p>
               <p className="mt-1 text-xl font-semibold">
-                {(retention?.prunedJobLogs7d ?? 0).toLocaleString()}
+                {retentionAvailable ? (retention?.prunedJobLogs7d ?? 0).toLocaleString() : "-"}
               </p>
             </div>
             <div className="rounded-md border p-3">
               <p className="text-xs text-muted-foreground">Pruned Runs</p>
               <p className="mt-1 text-xl font-semibold">
-                {(retention?.prunedRuns7d ?? 0).toLocaleString()}
+                {retentionAvailable ? (retention?.prunedRuns7d ?? 0).toLocaleString() : "-"}
               </p>
             </div>
             <div className="rounded-md border p-3">
               <p className="text-xs text-muted-foreground">Compacted Runs</p>
               <p className="mt-1 text-xl font-semibold">
-                {(retention?.compactedRuns7d ?? 0).toLocaleString()}
+                {retentionAvailable ? (retention?.compactedRuns7d ?? 0).toLocaleString() : "-"}
               </p>
             </div>
           </div>

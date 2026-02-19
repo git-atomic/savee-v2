@@ -28,10 +28,24 @@ interface R2ScanStats {
   sampled: boolean;
   sampledPages: number;
   bucket: string | null;
+  error: string | null;
 }
 
 function normalizeR2Token(v?: string) {
   return String(v || "").trim().toLowerCase().replace(/\/+$/, "");
+}
+
+function hasNonEmptyValue(v?: string) {
+  return String(v || "").trim() !== "";
+}
+
+function isR2ConfigComplete(config: R2BucketConfig) {
+  return (
+    hasNonEmptyValue(config.endpoint) &&
+    hasNonEmptyValue(config.accessKeyId) &&
+    hasNonEmptyValue(config.secretAccessKey) &&
+    hasNonEmptyValue(config.bucket)
+  );
 }
 
 function isSameR2Target(a: R2BucketConfig, b: R2BucketConfig) {
@@ -69,14 +83,19 @@ function getR2Config(prefix = ""): R2BucketConfig {
   };
 }
 
-function emptyR2Stats(bucket: string | null = null): R2ScanStats {
+function emptyR2Stats(
+  bucket: string | null = null,
+  configured = false,
+  error: string | null = null
+): R2ScanStats {
   return {
-    configured: false,
+    configured,
     totalObjects: 0,
     totalSizeBytes: 0,
     sampled: false,
     sampledPages: 0,
     bucket,
+    error,
   };
 }
 
@@ -102,6 +121,7 @@ function buildR2Usage(stats: R2ScanStats, softLimitGb: number) {
     nearLimit: softLimitBytes > 0 && stats.totalSizeBytes >= softLimitBytes,
     sampled: stats.sampled,
     sampledPages: stats.sampledPages,
+    error: stats.error,
   };
 }
 
@@ -140,7 +160,7 @@ async function getR2Stats(config: R2BucketConfig) {
   const accessKeyId = config.accessKeyId;
   const secretAccessKey = config.secretAccessKey;
   const bucket = config.bucket;
-  if (!endpoint || !accessKeyId || !secretAccessKey || !bucket) {
+  if (!isR2ConfigComplete(config)) {
     return emptyR2Stats(bucket ?? null);
   }
   try {
@@ -181,10 +201,12 @@ async function getR2Stats(config: R2BucketConfig) {
       sampled,
       sampledPages: pagesRead,
       bucket,
+      error: null,
     };
   } catch (e) {
     console.error("[metrics] R2 stats error", e);
-    return emptyR2Stats(bucket ?? null);
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    return emptyR2Stats(bucket ?? null, true, errorMessage);
   }
 }
 
@@ -240,6 +262,15 @@ export async function GET(request: NextRequest) {
       const secondarySameAsPrimary = isSameR2Target(
         primaryR2Config,
         secondaryR2Config
+      );
+      const secondaryConfigured =
+        isR2ConfigComplete(secondaryR2Config) && !secondarySameAsPrimary;
+
+      const retentionTableExistsResult = await q(
+        `SELECT to_regclass('engine_metrics_daily') IS NOT NULL AS exists`
+      );
+      const retentionTableExists = Boolean(
+        retentionTableExistsResult.rows?.[0]?.exists
       );
 
       const [
@@ -306,22 +337,30 @@ export async function GET(request: NextRequest) {
            GROUP BY DATE(completed_at)
            ORDER BY date ASC`
         ),
-        q(`SELECT MAX(updated_at) AS t FROM engine_metrics_daily`),
-        q(
-          `SELECT COALESCE(SUM(pruned_job_logs), 0)::int AS c
-           FROM engine_metrics_daily
-           WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
-        ),
-        q(
-          `SELECT COALESCE(SUM(pruned_runs), 0)::int AS c
-           FROM engine_metrics_daily
-           WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
-        ),
-        q(
-          `SELECT COALESCE(SUM(compacted_runs), 0)::int AS c
-           FROM engine_metrics_daily
-           WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
-        ),
+        retentionTableExists
+          ? q(`SELECT MAX(updated_at) AS t FROM engine_metrics_daily`)
+          : Promise.resolve({ rows: [{ t: null }] } as any),
+        retentionTableExists
+          ? q(
+              `SELECT COALESCE(SUM(pruned_job_logs), 0)::int AS c
+               FROM engine_metrics_daily
+               WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
+            )
+          : Promise.resolve({ rows: [{ c: 0 }] } as any),
+        retentionTableExists
+          ? q(
+              `SELECT COALESCE(SUM(pruned_runs), 0)::int AS c
+               FROM engine_metrics_daily
+               WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
+            )
+          : Promise.resolve({ rows: [{ c: 0 }] } as any),
+        retentionTableExists
+          ? q(
+              `SELECT COALESCE(SUM(compacted_runs), 0)::int AS c
+               FROM engine_metrics_daily
+               WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
+            )
+          : Promise.resolve({ rows: [{ c: 0 }] } as any),
         getR2Stats(primaryR2Config),
         secondarySameAsPrimary
           ? Promise.resolve(emptyR2Stats(secondaryR2Config.bucket ?? null))
@@ -335,7 +374,7 @@ export async function GET(request: NextRequest) {
       );
       const primaryR2 = buildR2Usage(primaryR2Stats, primarySoftLimitGb);
       const secondaryR2 = buildR2Usage(secondaryR2Stats, secondarySoftLimitGb);
-      const hasSecondary = secondaryR2.configured && !secondarySameAsPrimary;
+      const hasSecondary = secondaryConfigured;
       const combinedLimitBytes =
         primaryR2.softLimitBytes +
         (hasSecondary ? secondaryR2.softLimitBytes : 0);
@@ -345,6 +384,8 @@ export async function GET(request: NextRequest) {
         combinedLimitBytes > 0
           ? Math.min(100, (combinedSizeBytes / combinedLimitBytes) * 100)
           : 0;
+      const incompleteR2 =
+        Boolean(primaryR2.error) || Boolean(hasSecondary && secondaryR2.error);
       const workerParallelism = parseInt(process.env.WORKER_PARALLELISM || "2", 10);
 
       return {
@@ -382,6 +423,7 @@ export async function GET(request: NextRequest) {
         },
         maintenance: {
           retention: {
+            available: retentionTableExists,
             lastRunAt: retentionLastRunAt.rows?.[0]?.t ?? null,
             prunedJobLogs7d: retentionPrunedLogs7d.rows?.[0]?.c ?? 0,
             prunedRuns7d: retentionPrunedRuns7d.rows?.[0]?.c ?? 0,
@@ -402,6 +444,7 @@ export async function GET(request: NextRequest) {
             primaryR2.sampledPages + (hasSecondary ? secondaryR2.sampledPages : 0),
           hasSecondary,
           secondaryIgnoredAsDuplicate: secondarySameAsPrimary,
+          incomplete: incompleteR2,
           primary: primaryR2,
           secondary: hasSecondary
             ? secondaryR2
