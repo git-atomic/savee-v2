@@ -1,29 +1,30 @@
-"use client";
+﻿"use client";
 
 import * as React from "react";
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  AreaChart,
-  Area,
-} from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell } from "recharts";
 import {
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
-  ChartLegend,
-  ChartLegendContent,
   type ChartConfig,
 } from "@/components/ui/chart";
+
+interface R2Usage {
+  configured: boolean;
+  bucket: string | null;
+  totalObjects: number;
+  totalSizeBytes: number;
+  totalSizeGb: number;
+  usagePercent: number;
+  softLimitGb: number;
+  softLimitBytes: number;
+  nearLimit: boolean;
+  sampled: boolean;
+  sampledPages: number;
+}
 
 interface MetricsData {
   jobs: {
@@ -45,14 +46,15 @@ interface MetricsData {
       saveeUsers: number;
       userBlocks: number;
     };
-    blocksByStatus: Array<{ status: string; c: number }>;
     blocksByMediaType: Array<{ media_type: string; c: number }>;
-    sourcesByType: Array<{ source_type: string; c: number }>;
-    sourcesByStatus: Array<{ status: string; c: number }>;
     runsByStatus: Array<{ status: string; c: number }>;
-    timeSeries: {
-      blocks: Array<{ date: string; count: number }>;
-      runs: Array<{ date: string; count: number }>;
+  };
+  maintenance?: {
+    retention?: {
+      lastRunAt: string | null;
+      prunedJobLogs7d: number;
+      prunedRuns7d: number;
+      compactedRuns7d: number;
     };
   };
   r2: {
@@ -63,13 +65,19 @@ interface MetricsData {
     softLimitGb: number;
     softLimitBytes: number;
     nearLimit: boolean;
+    sampled?: boolean;
+    sampledPages?: number;
+    hasSecondary?: boolean;
+    secondaryIgnoredAsDuplicate?: boolean;
+    primary?: R2Usage;
+    secondary?: R2Usage;
   };
 }
 
-function formatDate(dateString: string | null): string {
-  if (!dateString) return "Never";
+function formatDate(value: string | null): string {
+  if (!value) return "Never";
   try {
-    const date = new Date(dateString);
+    const date = new Date(value);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
@@ -87,11 +95,43 @@ function formatDate(dateString: string | null): string {
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
+}
+
+function progressColor(percent: number, nearLimit: boolean) {
+  if (nearLimit) return "#ef4444";
+  if (percent > 80) return "#f59e0b";
+  return "#10b981";
+}
+
+function UsageLine({ label, usage, hint }: { label: string; usage: R2Usage; hint?: string }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-semibold">
+          {usage.totalSizeGb.toFixed(2)} GB / {usage.softLimitGb.toFixed(2)} GB
+        </span>
+      </div>
+      <div className="h-2 w-full overflow-hidden rounded-full bg-muted/50">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{
+            width: `${Math.min(100, usage.usagePercent)}%`,
+            backgroundColor: progressColor(usage.usagePercent, usage.nearLimit),
+          }}
+        />
+      </div>
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>{usage.totalObjects.toLocaleString()} objects</span>
+        <span>{formatBytes(usage.totalSizeBytes)}</span>
+      </div>
+      {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
 }
 
 export function MetricsDashboard() {
@@ -105,11 +145,9 @@ export function MetricsDashboard() {
     try {
       const response = await fetch("/api/engine/metrics", { cache: "no-store" });
       const data = await response.json();
-      if (data.success) {
-        setMetrics(data);
-      }
-    } catch (error) {
-      // Silently handle errors
+      if (data.success) setMetrics(data);
+    } catch {
+      // Ignore transient fetch errors; next poll will recover.
     } finally {
       inFlightRef.current = false;
       setLoading(false);
@@ -130,6 +168,7 @@ export function MetricsDashboard() {
         interval = undefined;
       }
     };
+
     onVisibility();
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
@@ -141,94 +180,24 @@ export function MetricsDashboard() {
   if (loading) {
     return (
       <div className="space-y-4 pb-8">
-        {/* Overview Cards Skeleton */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Card key={i} className="p-6 border">
-              <div className="flex flex-col gap-2">
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-9 w-20" />
-                <Skeleton className="h-3 w-32 mt-1" />
-              </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <Card key={n} className="p-4">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="mt-2 h-8 w-24" />
+              <Skeleton className="mt-2 h-3 w-32" />
             </Card>
           ))}
         </div>
-
-        {/* Database Entity Counts Skeleton */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Card className="p-6 border">
-            <div className="mb-6">
-              <Skeleton className="h-6 w-48 mb-2" />
-              <Skeleton className="h-4 w-64" />
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              {[1, 2, 3, 4, 5, 6].map((i) => (
-                <div key={i} className="flex flex-col">
-                  <Skeleton className="h-4 w-16 mb-1" />
-                  <Skeleton className="h-8 w-20" />
-                </div>
-              ))}
-            </div>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Card className="p-6">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="mt-3 h-[240px] w-full" />
           </Card>
-          <Card className="p-6 border">
-            <div className="mb-4">
-              <Skeleton className="h-5 w-48 mb-2" />
-              <Skeleton className="h-4 w-56" />
-            </div>
-            <Skeleton className="h-[280px] w-full" />
+          <Card className="p-6">
+            <Skeleton className="h-5 w-40" />
+            <Skeleton className="mt-3 h-[240px] w-full" />
           </Card>
-        </div>
-
-        {/* Charts Row 1 Skeleton */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {[1, 2].map((i) => (
-            <Card key={i} className="p-6 border">
-              <div className="mb-4">
-                <Skeleton className="h-5 w-40 mb-2" />
-                <Skeleton className="h-4 w-48" />
-              </div>
-              <Skeleton className="h-[280px] w-full" />
-            </Card>
-          ))}
-        </div>
-
-        {/* Charts Row 2 Skeleton */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {[1, 2].map((i) => (
-            <Card key={i} className="p-6 border">
-              <div className="mb-4">
-                <Skeleton className="h-5 w-40 mb-2" />
-                <Skeleton className="h-4 w-48" />
-              </div>
-              <Skeleton className="h-[280px] w-full" />
-            </Card>
-          ))}
-        </div>
-
-        {/* Charts Row 3 Skeleton */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {[1, 2].map((i) => (
-            <Card key={i} className="p-6 border">
-              <div className="mb-4">
-                <Skeleton className="h-5 w-40 mb-2" />
-                <Skeleton className="h-4 w-48" />
-              </div>
-              <Skeleton className="h-[280px] w-full" />
-            </Card>
-          ))}
-        </div>
-
-        {/* Time Series Charts Skeleton */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {[1, 2].map((i) => (
-            <Card key={i} className="p-6 border">
-              <div className="mb-4">
-                <Skeleton className="h-5 w-56 mb-2" />
-                <Skeleton className="h-4 w-48" />
-              </div>
-              <Skeleton className="h-[280px] w-full" />
-            </Card>
-          ))}
         </div>
       </div>
     );
@@ -236,701 +205,227 @@ export function MetricsDashboard() {
 
   if (!metrics) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex h-64 items-center justify-center">
         <p className="text-muted-foreground">Failed to load metrics</p>
       </div>
     );
   }
 
-  // Prepare chart data
-  const runsByStatusData = metrics.db.runsByStatus.map((r) => ({
-    status: r.status,
-    count: r.c,
-  }));
+  const chartColors = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#14b8a6", "#f97316"];
 
-  const blocksByStatusData = metrics.db.blocksByStatus.map((b) => ({
-    status: b.status,
-    value: b.c,
-  }));
+  const runsByStatusData = useMemo(
+    () => metrics.db.runsByStatus.map((r) => ({ status: r.status, count: r.c })),
+    [metrics.db.runsByStatus]
+  );
 
-  const blocksByMediaTypeDataRaw = metrics.db.blocksByMediaType.map((b) => ({
-    mediaType: b.media_type || "unknown",
-    count: b.c,
-  }));
+  const mediaTypeData = useMemo(
+    () =>
+      metrics.db.blocksByMediaType
+        .map((m) => ({ mediaType: m.media_type || "unknown", count: m.c }))
+        .sort((a, b) => b.count - a.count),
+    [metrics.db.blocksByMediaType]
+  );
 
-  const sourcesByTypeData = metrics.db.sourcesByType.map((s) => ({
-    type: s.source_type,
-    value: s.c,
-  }));
+  const mediaTypeConfig: ChartConfig = {};
+  mediaTypeData.forEach((item, index) => {
+    mediaTypeConfig[item.mediaType] = {
+      label: item.mediaType,
+      color: chartColors[index % chartColors.length],
+    };
+  });
 
-  const sourcesByStatusData = metrics.db.sourcesByStatus.map((s) => ({
-    status: s.status,
-    count: s.c,
-  }));
+  const runsStatusConfig = {
+    count: {
+      label: "Count",
+      color: "#3b82f6",
+    },
+  } satisfies ChartConfig;
 
-  // Format time series data
-  const blocksTimeSeriesData = metrics.db.timeSeries.blocks.map((item) => ({
-    date: new Date(item.date).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    }),
-    blocks: item.count,
-  }));
-
-  const runsTimeSeriesData = metrics.db.timeSeries.runs.map((item) => ({
-    date: new Date(item.date).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    }),
-    runs: item.count,
-  }));
-
-  // Chart configurations for evilcharts with professional, visible colors
-  const chartColors = {
-    primary: "#3b82f6", // Professional blue
-    secondary: "#10b981", // Professional green
-    accent: "#f59e0b", // Professional amber
-    purple: "#8b5cf6", // Professional purple
-    teal: "#14b8a6", // Professional teal
-    orange: "#f97316", // Professional orange
-    red: "#ef4444", // Professional red
-    indigo: "#6366f1", // Professional indigo
-    blue: "#2563eb", // Deeper blue for variety
-    emerald: "#059669", // Deeper green for variety
+  const fallbackPrimary: R2Usage = {
+    configured: true,
+    bucket: null,
+    totalObjects: metrics.r2.totalObjects,
+    totalSizeBytes: metrics.r2.totalSizeBytes,
+    totalSizeGb: metrics.r2.totalSizeGb,
+    usagePercent: metrics.r2.usagePercent,
+    softLimitGb: metrics.r2.softLimitGb,
+    softLimitBytes: metrics.r2.softLimitBytes,
+    nearLimit: metrics.r2.nearLimit,
+    sampled: Boolean(metrics.r2.sampled),
+    sampledPages: metrics.r2.sampledPages ?? 0,
   };
 
-  const runsByStatusConfig = {
-    count: {
-      label: "Count",
-      color: chartColors.primary,
-    },
-  } satisfies ChartConfig;
+  const primary = metrics.r2.primary ?? fallbackPrimary;
+  const secondary =
+    metrics.r2.secondary ??
+    ({
+      configured: false,
+      bucket: null,
+      totalObjects: 0,
+      totalSizeBytes: 0,
+      totalSizeGb: 0,
+      usagePercent: 0,
+      softLimitGb: primary.softLimitGb,
+      softLimitBytes: primary.softLimitBytes,
+      nearLimit: false,
+      sampled: false,
+      sampledPages: 0,
+    } as R2Usage);
 
-  const blocksByStatusConfig: ChartConfig = {};
-  blocksByStatusData.forEach((item, index) => {
-    const colors = [
-      chartColors.primary,
-      chartColors.secondary,
-      chartColors.accent,
-      chartColors.purple,
-      chartColors.teal,
-      chartColors.orange,
-    ];
-    blocksByStatusConfig[item.status] = {
-      label: item.status,
-      color: colors[index % colors.length],
-    };
-  });
-
-  const blocksByMediaTypeConfig: ChartConfig = {};
-  blocksByMediaTypeDataRaw.forEach((item, index) => {
-    const colors = [
-      chartColors.primary,
-      chartColors.secondary,
-      chartColors.accent,
-      chartColors.purple,
-      chartColors.teal,
-    ];
-    blocksByMediaTypeConfig[item.mediaType] = {
-      label: item.mediaType,
-      color: colors[index % colors.length],
-    };
-  });
-
-  // Add fill colors to data for bar chart
-  const blocksByMediaTypeData = blocksByMediaTypeDataRaw.map((item) => ({
-    ...item,
-    fill: blocksByMediaTypeConfig[item.mediaType]?.color || chartColors.primary,
-  }));
-
-  const sourcesByTypeConfig: ChartConfig = {};
-  sourcesByTypeData.forEach((item, index) => {
-    const colors = [
-      chartColors.primary,
-      chartColors.secondary,
-      chartColors.accent,
-      chartColors.purple,
-      chartColors.teal,
-      chartColors.orange,
-    ];
-    sourcesByTypeConfig[item.type] = {
-      label: item.type,
-      color: colors[index % colors.length],
-    };
-  });
-
-  const sourcesByStatusConfig = {
-    count: {
-      label: "Count",
-      color: chartColors.accent,
-    },
-  } satisfies ChartConfig;
-
-  const blocksTimeSeriesConfig = {
-    blocks: {
-      label: "Blocks",
-      color: chartColors.primary,
-    },
-  } satisfies ChartConfig;
-
-  const runsTimeSeriesConfig = {
-    runs: {
-      label: "Runs",
-      color: chartColors.secondary,
-    },
-  } satisfies ChartConfig;
-
-  // Database entity counts data for visualization
-  const dbEntityCountsData = [
-    { entity: "Blocks", count: metrics.db.total.blocks },
-    { entity: "Sources", count: metrics.db.total.sources },
-    { entity: "Runs", count: metrics.db.total.runs },
-    { entity: "Block Sources", count: metrics.db.total.blockSources },
-    { entity: "Savee Users", count: metrics.db.total.saveeUsers },
-    { entity: "User Blocks", count: metrics.db.total.userBlocks },
-  ];
-
-  const dbEntityCountsConfig: ChartConfig = {};
-  dbEntityCountsData.forEach((item, index) => {
-    const colors = [
-      chartColors.primary,
-      chartColors.secondary,
-      chartColors.accent,
-      chartColors.purple,
-      chartColors.teal,
-      chartColors.orange,
-    ];
-    dbEntityCountsConfig[item.entity] = {
-      label: item.entity,
-      color: colors[index % colors.length],
-    };
-  });
+  const hasSecondary = Boolean(metrics.r2.hasSecondary && secondary.configured);
+  const retention = metrics.maintenance?.retention;
 
   return (
     <div className="space-y-4 pb-8">
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card className="p-4 border hover:border-primary/30 transition-all hover:shadow-sm">
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Total Blocks
-            </p>
-            <p className="text-2xl font-semibold tracking-tight">
-              {metrics.db.total.blocks.toLocaleString()}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Scraped content items
-            </p>
-          </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <Card className="p-4">
+          <p className="text-sm text-muted-foreground">Total Blocks</p>
+          <p className="mt-1 text-2xl font-semibold">{metrics.db.total.blocks.toLocaleString()}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Stored content items</p>
         </Card>
 
-        <Card className="p-4 border hover:border-primary/30 transition-all hover:shadow-sm">
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Total Sources
-            </p>
-            <p className="text-2xl font-semibold tracking-tight">
-              {metrics.db.total.sources.toLocaleString()}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Active scraping sources
-            </p>
-          </div>
+        <Card className="p-4">
+          <p className="text-sm text-muted-foreground">Total Sources</p>
+          <p className="mt-1 text-2xl font-semibold">{metrics.db.total.sources.toLocaleString()}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Tracked jobs</p>
         </Card>
 
-        <Card className="p-4 border hover:border-primary/30 transition-all hover:shadow-sm">
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              R2 Storage
-            </p>
-            <p className="text-2xl font-semibold tracking-tight">
-              {metrics.r2.totalSizeGb.toFixed(2)} GB
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {metrics.r2.totalObjects.toLocaleString()} objects •{" "}
-              {metrics.r2.usagePercent.toFixed(1)}% used
-            </p>
-          </div>
+        <Card className="p-4">
+          <p className="text-sm text-muted-foreground">Run Queue</p>
+          <p className="mt-1 text-2xl font-semibold">
+            {metrics.jobs.running} running
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {metrics.jobs.queued} queued | {metrics.jobs.error} error
+          </p>
         </Card>
 
-        <Card className="p-4 border hover:border-primary/30 transition-all hover:shadow-sm">
-          <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium text-muted-foreground">
-              Worker Parallelism
-            </p>
-            <p className="text-2xl font-semibold tracking-tight">
-              {metrics.jobs.workerParallelism}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Concurrent workers
-            </p>
-          </div>
+        <Card className="p-4">
+          <p className="text-sm text-muted-foreground">R2 Total Usage</p>
+          <p className="mt-1 text-2xl font-semibold">{metrics.r2.totalSizeGb.toFixed(2)} GB</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {metrics.r2.totalObjects.toLocaleString()} objects | {metrics.r2.usagePercent.toFixed(1)}% used
+          </p>
+        </Card>
+
+        <Card className="p-4">
+          <p className="text-sm text-muted-foreground">Retention</p>
+          <p className="mt-1 text-2xl font-semibold">{formatDate(retention?.lastRunAt ?? null)}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Last maintenance run</p>
         </Card>
       </div>
 
-      {/* Database Entity Counts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-6">
-            <h3 className="text-xl font-semibold mb-1">
-              Database Entity Counts
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Total records across all database tables
-            </p>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <div className="flex flex-col">
-              <p className="text-sm font-medium text-muted-foreground mb-1">
-                Blocks
-              </p>
-              <p className="text-2xl font-bold">
-                {metrics.db.total.blocks.toLocaleString()}
-              </p>
-            </div>
-            <div className="flex flex-col">
-              <p className="text-sm font-medium text-muted-foreground mb-1">
-                Sources
-              </p>
-              <p className="text-2xl font-bold">
-                {metrics.db.total.sources.toLocaleString()}
-              </p>
-            </div>
-            <div className="flex flex-col">
-              <p className="text-sm font-medium text-muted-foreground mb-1">
-                Runs
-              </p>
-              <p className="text-2xl font-bold">
-                {metrics.db.total.runs.toLocaleString()}
-              </p>
-            </div>
-            <div className="flex flex-col">
-              <p className="text-sm font-medium text-muted-foreground mb-1">
-                Block Sources
-              </p>
-              <p className="text-2xl font-bold">
-                {metrics.db.total.blockSources.toLocaleString()}
-              </p>
-            </div>
-            <div className="flex flex-col">
-              <p className="text-sm font-medium text-muted-foreground mb-1">
-                Savee Users
-              </p>
-              <p className="text-2xl font-bold">
-                {metrics.db.total.saveeUsers.toLocaleString()}
-              </p>
-            </div>
-            <div className="flex flex-col">
-              <p className="text-sm font-medium text-muted-foreground mb-1">
-                User Blocks
-              </p>
-              <p className="text-2xl font-bold">
-                {metrics.db.total.userBlocks.toLocaleString()}
-              </p>
-            </div>
-          </div>
-        </Card>
-
-        {/* Database Entity Counts Chart */}
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-1">
-              Database Entity Distribution
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Visual breakdown of database entities
-            </p>
-          </div>
-          <ChartContainer
-            config={dbEntityCountsConfig}
-            className="h-[280px] w-full"
-          >
-            <BarChart
-              data={dbEntityCountsData}
-              accessibilityLayer
-              layout="vertical"
-            >
-              <CartesianGrid horizontal={false} />
-              <XAxis
-                type="number"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-              />
-              <YAxis
-                type="category"
-                dataKey="entity"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={10}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-                width={100}
-              />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="count" radius={4}>
-                {dbEntityCountsData.map((entry, index) => {
-                  const configEntry = dbEntityCountsConfig[entry.entity];
-                  return (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={configEntry?.color || chartColors.primary}
-                    />
-                  );
-                })}
-              </Bar>
-            </BarChart>
-          </ChartContainer>
-        </Card>
-      </div>
-
-      {/* Charts Row 1 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Runs by Status - Bar Chart */}
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-1">Runs by Status</h3>
-            <p className="text-sm text-muted-foreground">
-              Distribution of run statuses
-            </p>
-          </div>
-          <ChartContainer
-            config={runsByStatusConfig}
-            className="h-[280px] w-full"
-          >
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card className="p-6">
+          <h3 className="text-lg font-semibold">Runs by Status</h3>
+          <p className="text-sm text-muted-foreground">Live run-state distribution</p>
+          <ChartContainer config={runsStatusConfig} className="mt-3 h-[260px] w-full">
             <BarChart data={runsByStatusData} accessibilityLayer>
               <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="status"
-                tickLine={false}
-                tickMargin={10}
-                axisLine={false}
-                tickFormatter={(value) => value}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-              />
+              <XAxis dataKey="status" tickLine={false} axisLine={false} tickMargin={8} />
+              <YAxis tickLine={false} axisLine={false} tickMargin={8} />
               <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="count" fill={chartColors.primary} radius={4} />
+              <Bar dataKey="count" fill="#3b82f6" radius={4} />
             </BarChart>
           </ChartContainer>
         </Card>
 
-        {/* Blocks by Status - Donut Chart */}
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-1">Blocks by Status</h3>
-            <p className="text-sm text-muted-foreground">
-              Status breakdown of all blocks
-            </p>
-          </div>
-          <ChartContainer
-            config={blocksByStatusConfig}
-            className="h-[280px] w-full"
-          >
-            <PieChart>
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Pie
-                data={blocksByStatusData}
-                dataKey="value"
-                nameKey="status"
-                cx="50%"
-                cy="50%"
-                outerRadius={80}
-                innerRadius={45}
-                label={({ percent }) =>
-                  percent && percent > 0.05
-                    ? `${(percent * 100).toFixed(0)}%`
-                    : ""
-                }
-                labelLine={false}
-              >
-                {blocksByStatusData.map((entry, index) => {
-                  const configEntry = blocksByStatusConfig[entry.status];
-                  return (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={
-                        configEntry?.color ||
-                        [
-                          chartColors.primary,
-                          chartColors.secondary,
-                          chartColors.accent,
-                          chartColors.purple,
-                          chartColors.teal,
-                        ][index % 5]
-                      }
-                    />
-                  );
-                })}
-              </Pie>
-              <ChartLegend
-                content={({ payload }) => (
-                  <ChartLegendContent payload={payload} nameKey="status" />
-                )}
-                className="-translate-y-2"
-              />
-            </PieChart>
-          </ChartContainer>
-        </Card>
-      </div>
-
-      {/* Charts Row 2 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Blocks by Media Type - Bar Chart */}
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-1">Blocks by Media Type</h3>
-            <p className="text-sm text-muted-foreground">
-              Content type distribution
-            </p>
-          </div>
-          <ChartContainer
-            config={blocksByMediaTypeConfig}
-            className="h-[280px] w-full"
-          >
-            <BarChart data={blocksByMediaTypeData} accessibilityLayer>
+        <Card className="p-6">
+          <h3 className="text-lg font-semibold">Blocks by Media Type</h3>
+          <p className="text-sm text-muted-foreground">What you are actually storing</p>
+          <ChartContainer config={mediaTypeConfig} className="mt-3 h-[260px] w-full">
+            <BarChart data={mediaTypeData} accessibilityLayer>
               <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="mediaType"
-                tickLine={false}
-                tickMargin={10}
-                axisLine={false}
-                tickFormatter={(value) => value}
-              />
+              <XAxis dataKey="mediaType" tickLine={false} axisLine={false} tickMargin={8} />
               <YAxis tickLine={false} axisLine={false} tickMargin={8} />
               <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="count" radius={4} fill="#8884d8">
-                {blocksByMediaTypeData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.fill} />
+              <Bar dataKey="count" radius={4}>
+                {mediaTypeData.map((entry, index) => (
+                  <Cell
+                    key={`${entry.mediaType}-${index}`}
+                    fill={mediaTypeConfig[entry.mediaType]?.color || "#3b82f6"}
+                  />
                 ))}
               </Bar>
             </BarChart>
           </ChartContainer>
         </Card>
-
-        {/* Sources by Type - Donut Chart */}
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-1">Sources by Type</h3>
-            <p className="text-sm text-muted-foreground">
-              Source type distribution
-            </p>
-          </div>
-          <ChartContainer
-            config={sourcesByTypeConfig}
-            className="h-[280px] w-full"
-          >
-            <PieChart>
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Pie
-                data={sourcesByTypeData}
-                dataKey="value"
-                nameKey="type"
-                cx="50%"
-                cy="50%"
-                outerRadius={80}
-                innerRadius={45}
-                label={({ percent }) =>
-                  percent && percent > 0.05
-                    ? `${(percent * 100).toFixed(0)}%`
-                    : ""
-                }
-                labelLine={false}
-              >
-                {sourcesByTypeData.map((entry, index) => {
-                  const configEntry = sourcesByTypeConfig[entry.type];
-                  return (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={
-                        configEntry?.color ||
-                        [
-                          chartColors.primary,
-                          chartColors.secondary,
-                          chartColors.accent,
-                          chartColors.purple,
-                          chartColors.teal,
-                        ][index % 5]
-                      }
-                    />
-                  );
-                })}
-              </Pie>
-              <ChartLegend
-                content={({ payload }) => (
-                  <ChartLegendContent payload={payload} nameKey="type" />
-                )}
-                className="-translate-y-2"
-              />
-            </PieChart>
-          </ChartContainer>
-        </Card>
       </div>
 
-      {/* Charts Row 3 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Sources by Status - Bar Chart */}
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-1">Sources by Status</h3>
-            <p className="text-sm text-muted-foreground">
-              Status breakdown of all sources
-            </p>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card className="p-6 space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold">R2 Storage Breakdown</h3>
+            <p className="text-sm text-muted-foreground">Accurate primary/secondary usage</p>
           </div>
-          <ChartContainer
-            config={sourcesByStatusConfig}
-            className="h-[280px] w-full"
-          >
-            <BarChart data={sourcesByStatusData} accessibilityLayer>
-              <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="status"
-                tickLine={false}
-                tickMargin={10}
-                axisLine={false}
-                tickFormatter={(value) => value}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-              />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="count" fill={chartColors.accent} radius={4} />
-            </BarChart>
-          </ChartContainer>
-        </Card>
 
-        {/* R2 Storage Usage - Progress Bar */}
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-1">R2 Storage Usage</h3>
-            <p className="text-sm text-muted-foreground">
-              Cloudflare R2 bucket statistics
-            </p>
+          <UsageLine label="Total" usage={{ ...primary, totalObjects: metrics.r2.totalObjects, totalSizeBytes: metrics.r2.totalSizeBytes, totalSizeGb: metrics.r2.totalSizeGb, usagePercent: metrics.r2.usagePercent, softLimitGb: metrics.r2.softLimitGb, softLimitBytes: metrics.r2.softLimitBytes, nearLimit: metrics.r2.nearLimit }} />
+
+          <div className="border-t border-border/60 pt-3">
+            <UsageLine
+              label={`Primary${primary.bucket ? ` (${primary.bucket})` : ""}`}
+              usage={primary}
+            />
           </div>
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <span className="text-sm font-medium text-muted-foreground">
-                Storage Usage
-              </span>
-              <span className="text-sm font-semibold">
-                {metrics.r2.totalSizeGb.toFixed(2)} GB /{" "}
-                {metrics.r2.softLimitGb} GB
-              </span>
-            </div>
-            <div className="w-full bg-muted/50 rounded-full h-2.5 overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{
-                  width: `${Math.min(100, metrics.r2.usagePercent)}%`,
-                  backgroundColor: metrics.r2.nearLimit
-                    ? chartColors.red
-                    : metrics.r2.usagePercent > 80
-                    ? chartColors.accent
-                    : chartColors.secondary,
-                }}
+
+          {hasSecondary ? (
+            <div className="border-t border-border/60 pt-3">
+              <UsageLine
+                label={`Secondary${secondary.bucket ? ` (${secondary.bucket})` : ""}`}
+                usage={secondary}
               />
             </div>
-            <div className="flex justify-between items-center text-xs text-muted-foreground">
-              <span>{metrics.r2.totalObjects.toLocaleString()} objects</span>
-              <span>{formatBytes(metrics.r2.totalSizeBytes)}</span>
+          ) : (
+            <div className="rounded-md border border-dashed border-border/70 p-3 text-xs text-muted-foreground">
+              Secondary bucket not active.
+            </div>
+          )}
+
+          {metrics.r2.secondaryIgnoredAsDuplicate ? (
+            <p className="text-xs text-amber-500">
+              Secondary target matches primary, so it is ignored in totals to prevent double-counting.
+            </p>
+          ) : null}
+
+          {metrics.r2.sampled ? (
+            <p className="text-xs text-muted-foreground">
+              Scan is sampled ({metrics.r2.sampledPages ?? 0} pages). Increase `R2_METRICS_MAX_PAGES` for full-bucket counts.
+            </p>
+          ) : null}
+        </Card>
+
+        <Card className="p-6 space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold">Maintenance (Last 7 Days)</h3>
+            <p className="text-sm text-muted-foreground">Free-tier cleanup impact</p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="rounded-md border p-3">
+              <p className="text-xs text-muted-foreground">Pruned Logs</p>
+              <p className="mt-1 text-xl font-semibold">
+                {(retention?.prunedJobLogs7d ?? 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="rounded-md border p-3">
+              <p className="text-xs text-muted-foreground">Pruned Runs</p>
+              <p className="mt-1 text-xl font-semibold">
+                {(retention?.prunedRuns7d ?? 0).toLocaleString()}
+              </p>
+            </div>
+            <div className="rounded-md border p-3">
+              <p className="text-xs text-muted-foreground">Compacted Runs</p>
+              <p className="mt-1 text-xl font-semibold">
+                {(retention?.compactedRuns7d ?? 0).toLocaleString()}
+              </p>
             </div>
           </div>
-        </Card>
-      </div>
 
-      {/* Time Series Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Blocks Created Over Time - Area Chart */}
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-1">
-              Blocks Created (Last 30 Days)
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Daily block creation trend
-            </p>
+          <div className="space-y-1 text-sm text-muted-foreground">
+            <p>Last success: {formatDate(metrics.jobs.lastSuccessAt)}</p>
+            <p>Last error: {formatDate(metrics.jobs.lastErrorAt)}</p>
+            <p>Worker parallelism: {metrics.jobs.workerParallelism}</p>
           </div>
-          <ChartContainer
-            config={blocksTimeSeriesConfig}
-            className="h-[280px] w-full"
-          >
-            <AreaChart data={blocksTimeSeriesData} accessibilityLayer>
-              <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="date"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={10}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-              />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Area
-                type="monotone"
-                dataKey="blocks"
-                fill={chartColors.primary}
-                fillOpacity={0.4}
-                stroke={chartColors.primary}
-                strokeWidth={2}
-              />
-            </AreaChart>
-          </ChartContainer>
-        </Card>
-
-        {/* Runs Completed Over Time - Area Chart */}
-        <Card className="p-6 border hover:shadow-md transition-all">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-1">
-              Runs Completed (Last 30 Days)
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Daily run completion trend
-            </p>
-          </div>
-          <ChartContainer
-            config={runsTimeSeriesConfig}
-            className="h-[280px] w-full"
-          >
-            <AreaChart data={runsTimeSeriesData} accessibilityLayer>
-              <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="date"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={10}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-              />
-              <YAxis
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                tick={{ fill: "var(--foreground)", opacity: 0.7, fontSize: 12 }}
-              />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Area
-                type="monotone"
-                dataKey="runs"
-                fill={chartColors.secondary}
-                fillOpacity={0.4}
-                stroke={chartColors.secondary}
-                strokeWidth={2}
-              />
-            </AreaChart>
-          </ChartContainer>
         </Card>
       </div>
     </div>

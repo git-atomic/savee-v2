@@ -2,9 +2,10 @@
 
 ## Workflow
 
-- `.github/workflows/monitor.yml` runs every 5 minutes (cron) or on manual dispatch.
+- `.github/workflows/monitor.yml` runs every 30 minutes (cron) or on manual dispatch.
 - It POSTs your CMS monitor endpoint with a Bearer token.
 - Optional input `backfill=true` to run deeper sweeps.
+- `.github/workflows/db-retention.yml` runs daily and prunes old logs/runs after writing an archive summary artifact.
 
 ## Required Secrets
 
@@ -12,6 +13,10 @@
   - `https://your-cms-domain.com/api/engine/monitor`
 - `ENGINE_MONITOR_TOKEN`: Token that must match the CMS env `ENGINE_MONITOR_TOKEN`.
 - Optional: `SLACK_WEBHOOK_URL` to receive failure notifications.
+- For retention workflow:
+  - `DATABASE_URL` (required)
+  - `DB_SCHEMA` (optional, e.g. `cms`)
+  - Optional vars: `RETENTION_LOG_DAYS` (default `10`), `RETENTION_RUN_DAYS` (default `30`)
 
 ## CMS Env
 
@@ -32,6 +37,10 @@
 
 - Ensure `DATABASE_URL` and `R2_*` are set in CMS.
 - Review `runs` table and the Admin Engine view for status and logs.
+- Free-tier defaults in workflows:
+  - monitor cron: `*/30 * * * *`
+  - `PENDING_FETCH_LIMIT`: `12`
+  - no push trigger for monitor/worker workflows
 
 ---
 

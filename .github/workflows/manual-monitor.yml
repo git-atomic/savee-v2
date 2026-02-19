@@ -120,11 +120,18 @@ jobs:
       - name: Run pending runs (Python worker)
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL || vars.DATABASE_URL }}
+          DB_SCHEMA: ${{ secrets.DB_SCHEMA || vars.DB_SCHEMA || 'cms' }}
           R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL || vars.R2_ENDPOINT_URL }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || vars.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || vars.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME }}
           R2_REGION: auto
+          SECONDARY_DATABASE_URL: ${{ secrets.SECONDARY_DATABASE_URL || vars.SECONDARY_DATABASE_URL }}
+          SECONDARY_R2_ENDPOINT_URL: ${{ secrets.SECONDARY_R2_ENDPOINT_URL || vars.SECONDARY_R2_ENDPOINT_URL }}
+          SECONDARY_R2_ACCESS_KEY_ID: ${{ secrets.SECONDARY_R2_ACCESS_KEY_ID || vars.SECONDARY_R2_ACCESS_KEY_ID }}
+          SECONDARY_R2_SECRET_ACCESS_KEY: ${{ secrets.SECONDARY_R2_SECRET_ACCESS_KEY || vars.SECONDARY_R2_SECRET_ACCESS_KEY }}
+          SECONDARY_R2_BUCKET_NAME: ${{ secrets.SECONDARY_R2_BUCKET_NAME || vars.SECONDARY_R2_BUCKET_NAME }}
+          SECONDARY_R2_REGION: ${{ secrets.SECONDARY_R2_REGION || vars.SECONDARY_R2_REGION || 'auto' }}
           SECRET_KEY: ${{ secrets.SECRET_KEY || vars.SECRET_KEY }}
           COOKIES_JSON: ${{ secrets.COOKIES_JSON || secrets.SAVEE_COOKIES_JSON || vars.COOKIES_JSON || vars.SAVEE_COOKIES_JSON }}
           COOKIES_JSON_B64: ${{ secrets.COOKIES_JSON_B64 || vars.COOKIES_JSON_B64 }}
@@ -135,8 +142,17 @@ jobs:
           ENGINE_MONITOR_TOKEN: ${{ secrets.ENGINE_MONITOR_TOKEN || vars.ENGINE_MONITOR_TOKEN }}
           WORKER_PARALLELISM: ${{ secrets.WORKER_PARALLELISM || vars.WORKER_PARALLELISM || '2' }}
           WORKER_MAX_ATTEMPTS: ${{ secrets.WORKER_MAX_ATTEMPTS || vars.WORKER_MAX_ATTEMPTS || '3' }}
-          PENDING_FETCH_LIMIT: ${{ secrets.PENDING_FETCH_LIMIT || vars.PENDING_FETCH_LIMIT || '20' }}
-          RESOLVE_SOURCE_URLS: "false"
+          PENDING_FETCH_LIMIT: ${{ secrets.PENDING_FETCH_LIMIT || vars.PENDING_FETCH_LIMIT || '12' }}
+          RESOLVE_SOURCE_URLS: ${{ secrets.RESOLVE_SOURCE_URLS || vars.RESOLVE_SOURCE_URLS || 'false' }}
+          STOP_ON_FIRST_OLD: ${{ secrets.STOP_ON_FIRST_OLD || vars.STOP_ON_FIRST_OLD || 'true' }}
+          MIN_NEW_BEFORE_BREAK: ${{ secrets.MIN_NEW_BEFORE_BREAK || vars.MIN_NEW_BEFORE_BREAK || '1' }}
+          ONLY_OLD_EXIT_STREAK: ${{ secrets.ONLY_OLD_EXIT_STREAK || vars.ONLY_OLD_EXIT_STREAK || '8' }}
+          PROBE_MIN_ITEMS: ${{ secrets.PROBE_MIN_ITEMS || vars.PROBE_MIN_ITEMS || '48' }}
+          CAPACITY_CHECK_EVERY: ${{ secrets.CAPACITY_CHECK_EVERY || vars.CAPACITY_CHECK_EVERY || '25' }}
+          CAPACITY_CHECK_INTERVAL_SEC: ${{ secrets.CAPACITY_CHECK_INTERVAL_SEC || vars.CAPACITY_CHECK_INTERVAL_SEC || '60' }}
+          SAVEESCRAPER_SCROLL_STEPS: ${{ secrets.SAVEESCRAPER_SCROLL_STEPS || vars.SAVEESCRAPER_SCROLL_STEPS }}
+          SAVEESCRAPER_SCROLL_WAIT_MS: ${{ secrets.SAVEESCRAPER_SCROLL_WAIT_MS || vars.SAVEESCRAPER_SCROLL_WAIT_MS }}
+          SAVEESCRAPER_IDLE_ROUNDS: ${{ secrets.SAVEESCRAPER_IDLE_ROUNDS || vars.SAVEESCRAPER_IDLE_ROUNDS }}
         run: |
           cd apps/worker
           python scripts/run_pending_once.py

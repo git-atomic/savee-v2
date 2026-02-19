@@ -14,6 +14,35 @@ interface MetricsResponsePayload {
   r2: any;
 }
 
+interface R2BucketConfig {
+  endpoint?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  bucket?: string;
+}
+
+interface R2ScanStats {
+  configured: boolean;
+  totalObjects: number;
+  totalSizeBytes: number;
+  sampled: boolean;
+  sampledPages: number;
+  bucket: string | null;
+}
+
+function normalizeR2Token(v?: string) {
+  return String(v || "").trim().toLowerCase().replace(/\/+$/, "");
+}
+
+function isSameR2Target(a: R2BucketConfig, b: R2BucketConfig) {
+  return (
+    normalizeR2Token(a.endpoint) !== "" &&
+    normalizeR2Token(a.endpoint) === normalizeR2Token(b.endpoint) &&
+    normalizeR2Token(a.bucket) !== "" &&
+    normalizeR2Token(a.bucket) === normalizeR2Token(b.bucket)
+  );
+}
+
 let metricsCache: { expiresAt: number; payload: MetricsResponsePayload } | null =
   null;
 let metricsInflight: Promise<MetricsResponsePayload> | null = null;
@@ -22,6 +51,58 @@ function readIntEnv(name: string, fallback: number, min: number, max: number) {
   const n = parseInt(process.env[name] || String(fallback), 10);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, n));
+}
+
+function readNumberEnv(name: string, fallback: number) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function getR2Config(prefix = ""): R2BucketConfig {
+  return {
+    endpoint: process.env[`${prefix}R2_ENDPOINT_URL`],
+    accessKeyId: process.env[`${prefix}R2_ACCESS_KEY_ID`],
+    secretAccessKey: process.env[`${prefix}R2_SECRET_ACCESS_KEY`],
+    bucket: process.env[`${prefix}R2_BUCKET_NAME`],
+  };
+}
+
+function emptyR2Stats(bucket: string | null = null): R2ScanStats {
+  return {
+    configured: false,
+    totalObjects: 0,
+    totalSizeBytes: 0,
+    sampled: false,
+    sampledPages: 0,
+    bucket,
+  };
+}
+
+function buildR2Usage(stats: R2ScanStats, softLimitGb: number) {
+  const safeSoftLimitGb = Number.isFinite(softLimitGb) && softLimitGb > 0
+    ? softLimitGb
+    : 9.5;
+  const softLimitBytes = safeSoftLimitGb * 1024 * 1024 * 1024;
+  const usagePercent =
+    softLimitBytes > 0
+      ? Math.min(100, (stats.totalSizeBytes / softLimitBytes) * 100)
+      : 0;
+
+  return {
+    configured: stats.configured,
+    bucket: stats.bucket,
+    totalObjects: stats.totalObjects,
+    totalSizeBytes: stats.totalSizeBytes,
+    totalSizeGb: stats.totalSizeBytes / (1024 * 1024 * 1024),
+    usagePercent,
+    softLimitGb: safeSoftLimitGb,
+    softLimitBytes,
+    nearLimit: softLimitBytes > 0 && stats.totalSizeBytes >= softLimitBytes,
+    sampled: stats.sampled,
+    sampledPages: stats.sampledPages,
+  };
 }
 
 async function isAuthorized(req: NextRequest): Promise<boolean> {
@@ -54,13 +135,13 @@ async function isAuthorized(req: NextRequest): Promise<boolean> {
   }
 }
 
-async function getR2Stats() {
-  const endpoint = process.env.R2_ENDPOINT_URL;
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-  const bucket = process.env.R2_BUCKET_NAME;
+async function getR2Stats(config: R2BucketConfig) {
+  const endpoint = config.endpoint;
+  const accessKeyId = config.accessKeyId;
+  const secretAccessKey = config.secretAccessKey;
+  const bucket = config.bucket;
   if (!endpoint || !accessKeyId || !secretAccessKey || !bucket) {
-    return { totalObjects: 0, totalSizeBytes: 0, sampled: false, sampledPages: 0 };
+    return emptyR2Stats(bucket ?? null);
   }
   try {
     const maxPages = readIntEnv("R2_METRICS_MAX_PAGES", 20, 1, 200);
@@ -94,14 +175,16 @@ async function getR2Stats() {
 
     const sampled = Boolean(continuationToken);
     return {
+      configured: true,
       totalObjects,
       totalSizeBytes,
       sampled,
       sampledPages: pagesRead,
+      bucket,
     };
   } catch (e) {
     console.error("[metrics] R2 stats error", e);
-    return { totalObjects: 0, totalSizeBytes: 0, sampled: false, sampledPages: 0 };
+    return emptyR2Stats(bucket ?? null);
   }
 }
 
@@ -152,6 +235,13 @@ export async function GET(request: NextRequest) {
         }
       };
 
+      const primaryR2Config = getR2Config("");
+      const secondaryR2Config = getR2Config("SECONDARY_");
+      const secondarySameAsPrimary = isSameR2Target(
+        primaryR2Config,
+        secondaryR2Config
+      );
+
       const [
         queued,
         running,
@@ -173,7 +263,12 @@ export async function GET(request: NextRequest) {
         runsByStatus,
         blocksTimeSeries,
         runsTimeSeries,
-        r2Stats,
+        retentionLastRunAt,
+        retentionPrunedLogs7d,
+        retentionPrunedRuns7d,
+        retentionCompactedRuns7d,
+        primaryR2Stats,
+        secondaryR2Stats,
       ] = await Promise.all([
         q(`SELECT COUNT(*)::int AS c FROM runs WHERE status = 'pending'`),
         q(`SELECT COUNT(*)::int AS c FROM runs WHERE status = 'running'`),
@@ -211,14 +306,44 @@ export async function GET(request: NextRequest) {
            GROUP BY DATE(completed_at)
            ORDER BY date ASC`
         ),
-        getR2Stats(),
+        q(`SELECT MAX(updated_at) AS t FROM engine_metrics_daily`),
+        q(
+          `SELECT COALESCE(SUM(pruned_job_logs), 0)::int AS c
+           FROM engine_metrics_daily
+           WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
+        ),
+        q(
+          `SELECT COALESCE(SUM(pruned_runs), 0)::int AS c
+           FROM engine_metrics_daily
+           WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
+        ),
+        q(
+          `SELECT COALESCE(SUM(compacted_runs), 0)::int AS c
+           FROM engine_metrics_daily
+           WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
+        ),
+        getR2Stats(primaryR2Config),
+        secondarySameAsPrimary
+          ? Promise.resolve(emptyR2Stats(secondaryR2Config.bucket ?? null))
+          : getR2Stats(secondaryR2Config),
       ]);
 
-      const r2SoftGb = Number(process.env.R2_SOFT_LIMIT_GB || 9.5);
-      const r2LimitBytes = r2SoftGb * 1024 * 1024 * 1024;
-      const usagePercent =
-        r2LimitBytes > 0
-          ? Math.min(100, (r2Stats.totalSizeBytes / r2LimitBytes) * 100)
+      const primarySoftLimitGb = readNumberEnv("R2_SOFT_LIMIT_GB", 9.5);
+      const secondarySoftLimitGb = readNumberEnv(
+        "SECONDARY_R2_SOFT_LIMIT_GB",
+        primarySoftLimitGb
+      );
+      const primaryR2 = buildR2Usage(primaryR2Stats, primarySoftLimitGb);
+      const secondaryR2 = buildR2Usage(secondaryR2Stats, secondarySoftLimitGb);
+      const hasSecondary = secondaryR2.configured && !secondarySameAsPrimary;
+      const combinedLimitBytes =
+        primaryR2.softLimitBytes +
+        (hasSecondary ? secondaryR2.softLimitBytes : 0);
+      const combinedSizeBytes =
+        primaryR2.totalSizeBytes + (hasSecondary ? secondaryR2.totalSizeBytes : 0);
+      const combinedUsagePercent =
+        combinedLimitBytes > 0
+          ? Math.min(100, (combinedSizeBytes / combinedLimitBytes) * 100)
           : 0;
       const workerParallelism = parseInt(process.env.WORKER_PARALLELISM || "2", 10);
 
@@ -255,16 +380,32 @@ export async function GET(request: NextRequest) {
             runs: runsTimeSeries.rows || [],
           },
         },
+        maintenance: {
+          retention: {
+            lastRunAt: retentionLastRunAt.rows?.[0]?.t ?? null,
+            prunedJobLogs7d: retentionPrunedLogs7d.rows?.[0]?.c ?? 0,
+            prunedRuns7d: retentionPrunedRuns7d.rows?.[0]?.c ?? 0,
+            compactedRuns7d: retentionCompactedRuns7d.rows?.[0]?.c ?? 0,
+          },
+        },
         r2: {
-          totalObjects: r2Stats.totalObjects,
-          totalSizeBytes: r2Stats.totalSizeBytes,
-          totalSizeGb: r2Stats.totalSizeBytes / (1024 * 1024 * 1024),
-          usagePercent,
-          softLimitGb: r2SoftGb,
-          softLimitBytes: r2LimitBytes,
-          nearLimit: r2Stats.totalSizeBytes >= r2LimitBytes,
-          sampled: r2Stats.sampled,
-          sampledPages: r2Stats.sampledPages,
+          totalObjects:
+            primaryR2.totalObjects + (hasSecondary ? secondaryR2.totalObjects : 0),
+          totalSizeBytes: combinedSizeBytes,
+          totalSizeGb: combinedSizeBytes / (1024 * 1024 * 1024),
+          usagePercent: combinedUsagePercent,
+          softLimitGb: combinedLimitBytes / (1024 * 1024 * 1024),
+          softLimitBytes: combinedLimitBytes,
+          nearLimit: combinedLimitBytes > 0 && combinedSizeBytes >= combinedLimitBytes,
+          sampled: primaryR2.sampled || (hasSecondary ? secondaryR2.sampled : false),
+          sampledPages:
+            primaryR2.sampledPages + (hasSecondary ? secondaryR2.sampledPages : 0),
+          hasSecondary,
+          secondaryIgnoredAsDuplicate: secondarySameAsPrimary,
+          primary: primaryR2,
+          secondary: hasSecondary
+            ? secondaryR2
+            : { ...secondaryR2, configured: false },
         },
       } satisfies MetricsResponsePayload;
     })();

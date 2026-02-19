@@ -1,0 +1,101 @@
+name: DB Retention
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Preview only (no deletes)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      log_days:
+        description: "Retention days for job_logs (7-30)"
+        required: false
+        default: ""
+      run_days:
+        description: "Retention days for completed/error runs (14-180)"
+        required: false
+        default: ""
+
+jobs:
+  retention:
+    runs-on: ubuntu-22.04
+    concurrency:
+      group: db-retention
+      cancel-in-progress: false
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install minimal dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "psycopg[binary]>=3.2,<3.3"
+
+      - name: Run retention + archive summary
+        id: retention_run
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || vars.DATABASE_URL }}
+          DB_SCHEMA: ${{ secrets.DB_SCHEMA || vars.DB_SCHEMA }}
+          RETENTION_LOG_DAYS: ${{ vars.RETENTION_LOG_DAYS || '10' }}
+          RETENTION_RUN_DAYS: ${{ vars.RETENTION_RUN_DAYS || '30' }}
+        run: |
+          set -euo pipefail
+          LOG_DAYS="${{ github.event.inputs.log_days }}"
+          RUN_DAYS="${{ github.event.inputs.run_days }}"
+          DRY_RUN="${{ github.event.inputs.dry_run }}"
+          [ -z "$LOG_DAYS" ] && LOG_DAYS="$RETENTION_LOG_DAYS"
+          [ -z "$RUN_DAYS" ] && RUN_DAYS="$RETENTION_RUN_DAYS"
+          EXTRA_ARGS=""
+          if [ "$DRY_RUN" = "true" ]; then
+            EXTRA_ARGS="--dry-run"
+          fi
+          ARCHIVE_PATH="$RUNNER_TEMP/db-retention-${GITHUB_RUN_ID}.json"
+          LOG_PATH="$RUNNER_TEMP/db-retention-${GITHUB_RUN_ID}.log"
+          python apps/worker/scripts/db_retention.py \
+            --log-days "$LOG_DAYS" \
+            --run-days "$RUN_DAYS" \
+            --archive-out "$ARCHIVE_PATH" \
+            $EXTRA_ARGS | tee "$LOG_PATH"
+          echo "archive_path=$ARCHIVE_PATH" >> "$GITHUB_OUTPUT"
+          echo "log_path=$LOG_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload retention archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-retention-summary-${{ github.run_id }}
+          path: |
+            ${{ steps.retention_run.outputs.archive_path }}
+            ${{ steps.retention_run.outputs.log_path }}
+          retention-days: 30
+
+      - name: Add workflow summary
+        if: always()
+        run: |
+          {
+            echo "## DB Retention Summary"
+            echo ""
+            echo "- Workflow run: $GITHUB_RUN_ID"
+            echo "- Archive artifact: db-retention-summary-$GITHUB_RUN_ID"
+            echo ""
+            echo "```json"
+            cat "${{ steps.retention_run.outputs.archive_path }}" || true
+            echo "```"
+          } >> "$GITHUB_STEP_SUMMARY"
+
