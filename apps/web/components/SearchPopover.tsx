@@ -333,7 +333,7 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
                     </div>
                     <div className="space-y-1">
                       {autocompleteResults.map((block) => {
-                        const mediaUrl = getBlockMediaUrl(block);
+                        const mediaUrl = getBlockMediaUrl(block, { preferProxy: false });
                         const isVideo =
                           block.media_type === "video" ||
                           Boolean(block.video_url);

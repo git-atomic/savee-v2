@@ -31,6 +31,43 @@ const VIDEO_LOAD_TIMEOUT_PRIORITY = 2000; // Timeout for priority videos
 const VIDEO_LOAD_TIMEOUT_LAZY = 5000; // Timeout for lazy-loaded videos
 const LOOP_DELAY = 300; // Delay between video loops in milliseconds
 
+function extractAspectRatioFromMetadata(block: Block): number | null {
+  const metadata = block.metadata as Record<string, unknown> | null | undefined;
+  if (!metadata || typeof metadata !== "object") return null;
+
+  const directRatio = Number(
+    (metadata["aspect_ratio"] as unknown) ??
+      (metadata["aspectRatio"] as unknown) ??
+      (metadata["ratio"] as unknown)
+  );
+  if (Number.isFinite(directRatio) && directRatio > 0) return directRatio;
+
+  const widthCandidates = [
+    metadata["width"],
+    metadata["image_width"],
+    metadata["imageWidth"],
+    metadata["video_width"],
+    metadata["videoWidth"],
+  ];
+  const heightCandidates = [
+    metadata["height"],
+    metadata["image_height"],
+    metadata["imageHeight"],
+    metadata["video_height"],
+    metadata["videoHeight"],
+  ];
+
+  for (let i = 0; i < Math.max(widthCandidates.length, heightCandidates.length); i += 1) {
+    const width = Number(widthCandidates[i]);
+    const height = Number(heightCandidates[i]);
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      return width / height;
+    }
+  }
+
+  return null;
+}
+
 function getDominantColor(block: Block): string | null {
   if (
     block.color_hexes &&
@@ -70,7 +107,7 @@ function BlockCardComponent({
 
   // State management
   const [imageSrc, setImageSrc] = useState<string>(() =>
-    getBlockMediaUrl(block)
+    getBlockMediaUrl(block, { preferProxy: false })
   );
   const [isLoaded, setIsLoaded] = useState(wasPreviouslyLoaded);
   const [hasError, setHasError] = useState(false);
@@ -80,7 +117,7 @@ function BlockCardComponent({
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [hasVideoPlayed, setHasVideoPlayed] = useState(false);
   const [localAspectRatio, setLocalAspectRatio] = useState<number | null>(
-    propAspectRatio ?? null
+    propAspectRatio ?? extractAspectRatioFromMetadata(block)
   );
 
   // Refs
@@ -102,6 +139,9 @@ function BlockCardComponent({
   const aspectRatio = localAspectRatio ?? propAspectRatio;
   const displayAspectRatio =
     aspectRatio || getDeterministicAspectRatio(block.id) || 1;
+  const shouldRenderVideo = Boolean(
+    isVideo && videoUrl && (isHovered || hasVideoPlayed || priority)
+  );
 
   // Update ref when shouldLoad changes
   useEffect(() => {
@@ -140,152 +180,9 @@ function BlockCardComponent({
     [priority, wasPreviouslyLoaded, setElement]
   );
 
-  // Optimized aspect ratio loading for images
-  useEffect(() => {
-    if (
-      isVideo ||
-      !imageSrc ||
-      aspectRatio !== null ||
-      propAspectRatio !== undefined
-    )
-      return;
-
-    const img = new Image();
-    let cancelled = false;
-
-    const cleanup = () => {
-      cancelled = true;
-      img.onload = null;
-      img.onerror = null;
-      img.src = "";
-    };
-
-    img.onload = () => {
-      if (!cancelled && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        setLocalAspectRatio(img.naturalWidth / img.naturalHeight);
-      }
-      cleanup();
-    };
-
-    img.onerror = () => {
-      if (!cancelled) {
-        const thumbnail = block.thumbnail_url || block.image_url;
-        if (thumbnail && thumbnail !== imageSrc) {
-          const fallbackImg = new Image();
-          fallbackImg.onload = () => {
-            if (
-              !cancelled &&
-              fallbackImg.naturalWidth > 0 &&
-              fallbackImg.naturalHeight > 0
-            ) {
-              setLocalAspectRatio(
-                fallbackImg.naturalWidth / fallbackImg.naturalHeight
-              );
-            } else if (!cancelled) {
-              setLocalAspectRatio(1);
-            }
-          };
-          fallbackImg.onerror = () => {
-            if (!cancelled) setLocalAspectRatio(1);
-          };
-          fallbackImg.src = thumbnail;
-        } else {
-          setLocalAspectRatio(1);
-        }
-      }
-      cleanup();
-    };
-
-    img.src = imageSrc;
-
-    return cleanup;
-  }, [isVideo, imageSrc, aspectRatio, propAspectRatio, block]);
-
-  // Optimized aspect ratio loading for videos
-  useEffect(() => {
-    if (
-      !isVideo ||
-      !videoUrl ||
-      aspectRatio !== null ||
-      propAspectRatio !== undefined
-    )
-      return;
-
-    let cancelled = false;
-    let video: HTMLVideoElement | null = null;
-
-    const cleanup = () => {
-      cancelled = true;
-      if (video) {
-        video.onloadedmetadata = null;
-        video.onerror = null;
-        video.src = "";
-        video.load();
-        video = null;
-      }
-    };
-
-    // Try thumbnail first (faster)
-    if (imageSrc) {
-      const thumbnailImg = new Image();
-      thumbnailImg.onload = () => {
-        if (
-          !cancelled &&
-          thumbnailImg.naturalWidth > 0 &&
-          thumbnailImg.naturalHeight > 0
-        ) {
-          setLocalAspectRatio(
-            thumbnailImg.naturalWidth / thumbnailImg.naturalHeight
-          );
-        }
-      };
-      thumbnailImg.onerror = () => {
-        // Fall through to video loading
-      };
-      thumbnailImg.src = imageSrc;
-    }
-
-    // Load video metadata in parallel
-    video = document.createElement("video");
-    video.preload = "metadata";
-    video.muted = true;
-    video.playsInline = true;
-    video.crossOrigin = "anonymous";
-
-    video.onloadedmetadata = () => {
-      if (
-        !cancelled &&
-        video &&
-        video.videoWidth > 0 &&
-        video.videoHeight > 0
-      ) {
-        setLocalAspectRatio(video.videoWidth / video.videoHeight);
-      }
-      cleanup();
-    };
-
-    video.onerror = () => {
-      if (!cancelled && localAspectRatio === null) {
-        setLocalAspectRatio(1);
-      }
-      cleanup();
-    };
-
-    video.src = videoUrl;
-
-    return cleanup;
-  }, [
-    isVideo,
-    videoUrl,
-    imageSrc,
-    aspectRatio,
-    propAspectRatio,
-    localAspectRatio,
-  ]);
-
   // Throttled video position tracking
   useEffect(() => {
-    if (!isVideo || !videoRef.current || !shouldLoad) return;
+    if (!isVideo || !videoRef.current || !shouldLoad || !shouldRenderVideo) return;
 
     const video = videoRef.current;
 
@@ -315,11 +212,11 @@ function BlockCardComponent({
         cancelAnimationFrame(timeUpdateRafRef.current);
       }
     };
-  }, [isVideo, shouldLoad]);
+  }, [isVideo, shouldLoad, shouldRenderVideo]);
 
   // Video loading timeout with better fallback
   useEffect(() => {
-    if (!isVideo || !videoUrl || !shouldLoad || isVideoLoaded) return;
+    if (!isVideo || !videoUrl || !shouldLoad || isVideoLoaded || !shouldRenderVideo) return;
 
     const timeout = setTimeout(
       () => {
@@ -341,11 +238,11 @@ function BlockCardComponent({
     );
 
     return () => clearTimeout(timeout);
-  }, [isVideo, videoUrl, shouldLoad, isVideoLoaded, priority]);
+  }, [isVideo, videoUrl, shouldLoad, isVideoLoaded, priority, shouldRenderVideo]);
 
   // Video playing state tracking with optimized event listeners
   useEffect(() => {
-    if (!isVideo || !videoRef.current || !shouldLoad) return;
+    if (!isVideo || !videoRef.current || !shouldLoad || !shouldRenderVideo) return;
 
     const video = videoRef.current;
 
@@ -362,11 +259,11 @@ function BlockCardComponent({
       video.removeEventListener("pause", handlePause);
       video.removeEventListener("ended", handleEnded);
     };
-  }, [isVideo, shouldLoad]);
+  }, [isVideo, shouldLoad, shouldRenderVideo]);
 
   // Optimized video autoplay on hover
   useEffect(() => {
-    if (!isVideo || !videoRef.current || !videoUrl || !shouldLoad) return;
+    if (!isVideo || !videoRef.current || !videoUrl || !shouldLoad || !shouldRenderVideo) return;
 
     const video = videoRef.current;
 
@@ -467,7 +364,7 @@ function BlockCardComponent({
         hoverTimeoutRef.current = null;
       }
     };
-  }, [isHovered, isVideo, videoUrl, shouldLoad]);
+  }, [isHovered, isVideo, videoUrl, shouldLoad, shouldRenderVideo]);
 
   // Comprehensive video cleanup on unmount
   useEffect(() => {
@@ -657,6 +554,18 @@ function BlockCardComponent({
           minHeight: 0,
         }}
       >
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundColor: skeletonColor,
+            filter: isLoaded ? "blur(0px)" : "blur(14px)",
+            transform: isLoaded ? "scale(1)" : "scale(1.04)",
+            opacity: isLoaded ? 0 : 1,
+            transition: "opacity 220ms ease-out, filter 220ms ease-out, transform 220ms ease-out",
+          }}
+          aria-hidden="true"
+        />
+
         {/* Media Content */}
         {(shouldLoad || wasPreviouslyLoaded) && (
           <>
@@ -686,32 +595,34 @@ function BlockCardComponent({
                 )}
 
                 {/* Video stays visible when hovered, playing, or has been played (showing paused frame) */}
-                <video
-                  ref={videoRef}
-                  src={videoUrl}
-                  poster={imageSrc || undefined}
-                  className="absolute inset-0 h-full w-full"
-                  muted
-                  playsInline
-                  preload={priority ? "auto" : "metadata"}
-                  crossOrigin="anonymous"
-                  onLoadedData={handleVideoLoadedData}
-                  onLoadedMetadata={handleVideoLoadedData}
-                  onError={handleVideoError}
-                  onCanPlay={videoEventHandlers.onCanPlay}
-                  onPlaying={videoEventHandlers.onPlaying}
-                  onEnded={videoEventHandlers.onEnded}
-                  onProgress={videoEventHandlers.onProgress}
-                  style={{
-                    opacity:
-                      isHovered || isVideoPlaying || hasVideoPlayed ? 1 : 0,
-                    transition: wasPreviouslyLoaded
-                      ? "none"
-                      : "opacity 0.25s ease-out",
-                    objectFit: "cover",
-                  }}
-                  aria-label={block.title || "Video content"}
-                />
+                {shouldRenderVideo && (
+                  <video
+                    ref={videoRef}
+                    src={videoUrl}
+                    poster={imageSrc || undefined}
+                    className="absolute inset-0 h-full w-full"
+                    muted
+                    playsInline
+                    preload={priority ? "auto" : "metadata"}
+                    crossOrigin="anonymous"
+                    onLoadedData={handleVideoLoadedData}
+                    onLoadedMetadata={handleVideoLoadedData}
+                    onError={handleVideoError}
+                    onCanPlay={videoEventHandlers.onCanPlay}
+                    onPlaying={videoEventHandlers.onPlaying}
+                    onEnded={videoEventHandlers.onEnded}
+                    onProgress={videoEventHandlers.onProgress}
+                    style={{
+                      opacity:
+                        isHovered || isVideoPlaying || hasVideoPlayed ? 1 : 0,
+                      transition: wasPreviouslyLoaded
+                        ? "none"
+                        : "opacity 0.25s ease-out",
+                      objectFit: "cover",
+                    }}
+                    aria-label={block.title || "Video content"}
+                  />
+                )}
 
                 {/* Video badge - visible when not hovering */}
                 <div

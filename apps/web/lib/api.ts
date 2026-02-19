@@ -86,7 +86,15 @@ export async function getPresignedUrl(r2Key: string): Promise<string | null> {
   }
 }
 
-export function getBlockMediaUrl(block: Block): string {
+interface BlockMediaUrlOptions {
+  preferProxy?: boolean;
+}
+
+export function getBlockMediaUrl(
+  block: Block,
+  options: BlockMediaUrlOptions = {}
+): string {
+  const preferProxy = options.preferProxy ?? true;
   // High‑quality thumbnail selection for grid blocks.
   //
   // For videos, prioritize thumbnail_url for better performance.
@@ -112,7 +120,7 @@ export function getBlockMediaUrl(block: Block): string {
     return block.thumbnail_url;
   }
 
-  if (block.r2_key) {
+  if (preferProxy && block.r2_key) {
     return `/api/media?key=${encodeURIComponent(block.r2_key)}`;
   }
 
@@ -122,6 +130,10 @@ export function getBlockMediaUrl(block: Block): string {
 
   if (block.thumbnail_url) {
     return block.thumbnail_url;
+  }
+
+  if (!preferProxy && block.r2_key) {
+    return `/api/media?key=${encodeURIComponent(block.r2_key)}`;
   }
 
   if (block.video_url) {
@@ -243,11 +255,11 @@ export async function searchBlocks(
 }
 
 export function getUserAvatarUrl(user: User): string {
-  if (user.avatar_r2_key) {
-    return `/api/media?key=${encodeURIComponent(user.avatar_r2_key)}`;
-  }
   if (user.profile_image_url) {
     return user.profile_image_url;
+  }
+  if (user.avatar_r2_key) {
+    return `/api/media?key=${encodeURIComponent(user.avatar_r2_key)}`;
   }
   return "";
 }
