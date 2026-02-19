@@ -40,6 +40,27 @@ function normalizeR2Token(v?: string) {
   return String(v || "").trim().toLowerCase().replace(/\/+$/, "");
 }
 
+function normalizeR2ErrorMessage(raw: string | null): string | null {
+  if (!raw) return null;
+  const msg = String(raw).trim();
+  if (!msg) return null;
+  const lower = msg.toLowerCase();
+  if (
+    lower.includes("eproto") ||
+    lower.includes("handshake failure") ||
+    lower.includes("ssl/tls alert")
+  ) {
+    return "TLS handshake failed (check R2 endpoint/account key pairing).";
+  }
+  if (lower.includes("invalidaccesskeyid") || lower.includes("signaturedoesnotmatch")) {
+    return "R2 credentials are invalid for this endpoint/bucket.";
+  }
+  if (lower.includes("nodename") || lower.includes("enotfound")) {
+    return "R2 endpoint DNS lookup failed.";
+  }
+  return msg;
+}
+
 function hasNonEmptyValue(v?: string) {
   return String(v || "").trim() !== "";
 }
@@ -208,7 +229,7 @@ async function getR2Stats(config: R2BucketConfig) {
     // Default to exact scans (no page cap) unless R2_METRICS_MAX_PAGES is set.
     const configuredPageLimit = readOptionalPositiveIntEnv("R2_METRICS_MAX_PAGES");
     const pageLimit = configuredPageLimit ?? Number.MAX_SAFE_INTEGER;
-    const maxScanMs = readIntEnv("R2_METRICS_MAX_SCAN_MS", 25000, 1000, 120000);
+    const maxScanMs = readIntEnv("R2_METRICS_MAX_SCAN_MS", 55000, 5000, 120000);
     const deadline = Date.now() + maxScanMs;
     const client = new S3Client({
       region: "auto",
@@ -285,6 +306,20 @@ async function getR2StatsCached(config: R2BucketConfig) {
   }
 
   const stats = await getR2Stats(config);
+  const prevStats = cached?.stats;
+  const prevComplete = Boolean(prevStats && !prevStats.sampled && !prevStats.error);
+  const nextIncomplete = Boolean(stats.sampled || stats.error);
+
+  // Prefer an older full scan over replacing it with a partial/error result.
+  if (prevComplete && nextIncomplete) {
+    r2StatsCache.set(cacheKey, {
+      stats: prevStats as R2ScanStats,
+      expiresAt: now + cacheSeconds * 1000,
+    });
+    pruneR2StatsCache(now);
+    return prevStats as R2ScanStats;
+  }
+
   r2StatsCache.set(cacheKey, {
     stats,
     expiresAt: now + cacheSeconds * 1000,
@@ -457,7 +492,15 @@ export async function GET(request: NextRequest) {
       );
       const primaryR2 = buildR2Usage(primaryR2Stats, primarySoftLimitGb);
       const secondaryR2 = buildR2Usage(secondaryR2Stats, secondarySoftLimitGb);
-      const hasSecondary = secondaryConfigured;
+      const secondaryHealthy =
+        secondaryConfigured &&
+        !secondaryR2.error &&
+        Number.isFinite(secondaryR2.totalSizeBytes);
+      const hasSecondary = secondaryHealthy;
+      const secondaryUnavailableReason =
+        secondaryConfigured && !secondaryHealthy
+          ? normalizeR2ErrorMessage(secondaryR2.error) ?? "Secondary R2 unavailable."
+          : null;
       const combinedLimitBytes =
         primaryR2.softLimitBytes +
         (hasSecondary ? secondaryR2.softLimitBytes : 0);
@@ -529,12 +572,25 @@ export async function GET(request: NextRequest) {
           sampledPages:
             primaryR2.sampledPages + (hasSecondary ? secondaryR2.sampledPages : 0),
           hasSecondary,
+          secondaryConfigured,
+          secondaryUnavailableReason,
           secondaryIgnoredAsDuplicate: secondarySameAsPrimary,
           incomplete: incompleteR2,
           primary: primaryR2,
           secondary: hasSecondary
             ? secondaryR2
-            : { ...secondaryR2, configured: false },
+            : {
+                ...secondaryR2,
+                configured: false,
+                totalObjects: 0,
+                totalSizeBytes: 0,
+                totalSizeGb: 0,
+                usagePercent: 0,
+                nearLimit: false,
+                sampled: false,
+                sampledPages: 0,
+                error: null,
+              },
         },
       } satisfies MetricsResponsePayload;
     })();

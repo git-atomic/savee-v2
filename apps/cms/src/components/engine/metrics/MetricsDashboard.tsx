@@ -70,6 +70,8 @@ interface MetricsData {
     sampled?: boolean;
     sampledPages?: number;
     hasSecondary?: boolean;
+    secondaryConfigured?: boolean;
+    secondaryUnavailableReason?: string | null;
     secondaryIgnoredAsDuplicate?: boolean;
     incomplete?: boolean;
     primary?: R2Usage;
@@ -112,7 +114,13 @@ function progressColor(percent: number, nearLimit: boolean) {
 
 function compactError(message: string | null | undefined, max = 120): string | null {
   if (!message) return null;
-  const text = String(message).trim();
+  const raw = String(message).trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const text =
+    lower.includes("eproto") || lower.includes("handshake failure")
+      ? "TLS handshake failed (check endpoint/account pairing)."
+      : raw;
   if (!text) return null;
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
@@ -289,6 +297,8 @@ export function MetricsDashboard() {
     } as R2Usage);
 
   const hasSecondary = Boolean(metrics.r2.hasSecondary && secondary.configured);
+  const secondaryConfigured = Boolean(metrics.r2.secondaryConfigured);
+  const secondaryUnavailableReason = compactError(metrics.r2.secondaryUnavailableReason);
   const retention = metrics.maintenance?.retention;
   const retentionAvailable = retention?.available ?? true;
   const primaryError = compactError(primary.error);
@@ -355,29 +365,35 @@ export function MetricsDashboard() {
               ? secondaryError
                 ? "Scan error"
                 : `${secondary.totalSizeGb.toFixed(2)} GB`
-              : "Inactive"}
+              : secondaryConfigured
+                ? "Unavailable"
+                : "Inactive"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {hasSecondary
               ? secondaryError
                 ? secondaryError
                 : `${secondary.totalObjects.toLocaleString()} objects | ${secondary.usagePercent.toFixed(1)}% used`
-              : "No separate secondary target"}
+              : secondaryConfigured
+                ? (secondaryUnavailableReason || "Secondary bucket is configured but currently unreachable")
+                : "No separate secondary target"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             {hasSecondary && secondary.bucket
               ? `Bucket: ${secondary.bucket}`
-              : "Bucket: -"}
+              : secondary.bucket
+                ? `Bucket: ${secondary.bucket}`
+                : "Bucket: -"}
           </p>
         </Card>
 
         <Card className="p-4">
           <p className="text-sm text-muted-foreground">Retention</p>
           <p className="mt-1 text-2xl font-semibold">
-            {retentionAvailable ? formatDate(retention?.lastRunAt ?? null) : "Unavailable"}
+            {retentionAvailable ? formatDate(retention?.lastRunAt ?? null) : "Never"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {retentionAvailable ? "Last maintenance run" : "Retention metrics table not installed"}
+            {retentionAvailable ? "Last maintenance run" : "Retention job not enabled yet"}
           </p>
         </Card>
       </div>
@@ -442,7 +458,9 @@ export function MetricsDashboard() {
             </div>
           ) : (
             <div className="rounded-md border border-dashed border-border/70 p-3 text-xs text-muted-foreground">
-              Secondary bucket not active.
+              {secondaryConfigured
+                ? `Secondary bucket unavailable${secondaryUnavailableReason ? `: ${secondaryUnavailableReason}` : "."}`
+                : "Secondary bucket not active."}
             </div>
           )}
 
