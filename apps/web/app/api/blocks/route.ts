@@ -4,8 +4,8 @@ import { dedupeBlocksByStableKey } from "@/lib/block-dedupe";
 // Force dynamic rendering - prevent Next.js from caching this route
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-const EDGE_CACHE_SECONDS = 20;
-const EDGE_STALE_SECONDS = 120;
+const EDGE_CACHE_SECONDS = 45;
+const EDGE_STALE_SECONDS = 300;
 
 // Server-side CMS base URL. This should always be the Payload CMS origin,
 // not the frontend, so we only use CMS_URL here.

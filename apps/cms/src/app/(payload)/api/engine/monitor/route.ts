@@ -131,10 +131,10 @@ export async function POST(request: NextRequest) {
     const bodyBackfill = (body as any)?.backfill === true;
 
     const minIntervalSec = parseInt(
-      process.env.MONITOR_MIN_INTERVAL_SECONDS || String(3 * 60 * 60),
+      process.env.MONITOR_MIN_INTERVAL_SECONDS || String(1 * 60 * 60),
       10
     );
-    const maxParallel = parseInt(process.env.MONITOR_MAX_PARALLEL || "4", 10);
+    const maxParallel = parseInt(process.env.MONITOR_MAX_PARALLEL || "2", 10);
     const maxIntervalSec = parseInt(
       process.env.MONITOR_MAX_INTERVAL_SECONDS || String(6 * 60 * 60),
       10

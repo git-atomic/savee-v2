@@ -56,7 +56,7 @@ export const JobLogsSection = React.memo(function JobLogsSection({
     snapshotInFlightRef.current = true;
     try {
       const res = await fetch(
-        `/api/engine/logs?runId=${encodeURIComponent(runIdNum)}&limit=500`,
+        `/api/engine/logs?runId=${encodeURIComponent(runIdNum)}&limit=300`,
         { cache: "no-store" }
       );
       if (res.ok) {
@@ -121,7 +121,7 @@ export const JobLogsSection = React.memo(function JobLogsSection({
           ) {
             return prev;
           }
-          return [...prev, nextEntry].slice(-500);
+          return [...prev, nextEntry].slice(-300);
         });
       };
       es.onmessage = (ev) => {

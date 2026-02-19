@@ -304,6 +304,21 @@ export async function GET(request: NextRequest) {
         }
 
         const runIdStr = latestRun?.id?.toString();
+        const latestCounters =
+          (latestRun?.counters as { uploaded?: number; found?: number; errors?: number }) ||
+          {};
+        const uploadedCount = Number(latestCounters.uploaded || 0);
+        const foundCount = Number(latestCounters.found || 0);
+        const treatBlocksErrorAsPartialComplete =
+          latestRun?.status === "error" &&
+          normalizedSourceType === "blocks" &&
+          uploadedCount > 0 &&
+          foundCount >= uploadedCount;
+        const normalizedRunStatus = isStaleRunning
+          ? "stale"
+          : treatBlocksErrorAsPartialComplete
+            ? "partial"
+            : (latestRun?.status as string);
         
         return {
           id: source.id.toString(),
@@ -327,11 +342,13 @@ export async function GET(request: NextRequest) {
                   : (source.status as any) === "stopped"
                     ? "stopped"
                     : latestRun?.status === "error"
-                      ? "error"
+                      ? treatBlocksErrorAsPartialComplete
+                        ? "completed"
+                        : "error"
                       : latestRun?.status === "completed"
                         ? normalizedSourceType === "blocks" ? "completed" : "active"
                         : (source.status as any),
-          runStatus: isStaleRunning ? "stale" : (latestRun?.status as string), // expose stale
+          runStatus: normalizedRunStatus,
           counters: latestRun?.counters || { found: 0, uploaded: 0, errors: 0 },
           lastRun: latestRun?.completedAt || latestRun?.completed_at || latestRun?.startedAt || latestRun?.started_at || undefined,
           nextRun: nextRunIso,

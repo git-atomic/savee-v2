@@ -470,57 +470,30 @@ export async function POST(request: NextRequest) {
           const maxItemsRaw = runsResult.rows[0]?.max_items ?? null;
           const maxItems = maxItemsRaw == null ? 0 : Number(maxItemsRaw);
 
-          // Only create new run if we don't have a pending one already
-          if (!runId) {
-            // Reuse latest completed/error run if possible
-            const reuse = await db.query(
-              `SELECT id FROM runs WHERE source_id = $1 AND status IN ('completed','error')
-                   ORDER BY created_at DESC LIMIT 1`,
-              [sourceId]
-            );
-            const externalRunner =
-              String(process.env.MONITOR_MODE || "").toLowerCase() ===
-                "external" ||
-              String(process.env.EXTERNAL_RUNNER || "").toLowerCase() ===
-                "true" ||
-              String(process.env.VERCEL || "") === "1";
-
-            if (reuse.rows.length > 0) {
-              runId = reuse.rows[0].id as number;
-              await db.query(
-                `UPDATE runs SET status = $1, counters = $2, started_at = $3, completed_at = NULL, error_message = NULL, updated_at = now()
-                     WHERE id = $4`,
-                [
-                  externalRunner ? "pending" : "running",
-                  JSON.stringify({ found: 0, uploaded: 0, errors: 0 }),
-                  new Date(),
-                  runId,
-                ]
-              );
-            } else {
-              const runResult = await db.query(
-                `INSERT INTO runs (source_id, kind, max_items, status, counters, started_at)
-                     VALUES ($1, $2, $3, $4, $5, $6)
-                     RETURNING id`,
-                [
-                  sourceId,
-                  "manual",
-                  maxItems,
-                  externalRunner ? "pending" : "running",
-                  JSON.stringify({ found: 0, uploaded: 0, errors: 0 }),
-                  new Date(),
-                ]
-              );
-              runId = runResult.rows[0].id as number;
-            }
-          }
-
           const externalRunner =
             String(process.env.MONITOR_MODE || "").toLowerCase() ===
               "external" ||
             String(process.env.EXTERNAL_RUNNER || "").toLowerCase() ===
               "true" ||
             String(process.env.VERCEL || "") === "1";
+
+          // Only create a new run when we are not reusing an existing pending run.
+          if (!runId) {
+            const runResult = await db.query(
+              `INSERT INTO runs (source_id, kind, max_items, status, counters, started_at)
+                   VALUES ($1, $2, $3, $4, $5, $6)
+                   RETURNING id`,
+              [
+                sourceId,
+                "manual",
+                maxItems,
+                externalRunner ? "pending" : "running",
+                JSON.stringify({ found: 0, uploaded: 0, errors: 0 }),
+                new Date(),
+              ]
+            );
+            runId = runResult.rows[0].id as number;
+          }
 
           if (externalRunner) {
             // Do not spawn; return run details for external runner

@@ -66,9 +66,12 @@ export async function POST(request: NextRequest) {
     } catch {}
 
     const bulkDetection = detectBulkUrls(url);
+    const isBulkInput = bulkDetection.count > 1;
 
-    // Parse the URL to determine type and extract username
-    const parsedUrl = parseSaveeUrl(url);
+    // Parse URL type; for bulk input we bypass single-URL parsing.
+    const parsedUrl = isBulkInput
+      ? { isValid: true, sourceType: "blocks" as const, href: bulkDetection.urls[0] }
+      : parseSaveeUrl(url);
 
     if (!parsedUrl.isValid) {
       return NextResponse.json(
@@ -77,10 +80,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const normalizedUrl =
-      bulkDetection.isBulk || bulkDetection.count > 1
-        ? url
-        : (parsedUrl.href || url).trim();
+    const normalizedUrl = isBulkInput
+      ? bulkDetection.urls.join(",")
+      : (parsedUrl.href || url).trim();
 
     // Create or find source by URL. If same URL exists but with missing username, update it.
     const sources = await payload.find({
@@ -189,39 +191,20 @@ export async function POST(request: NextRequest) {
       // Existing row was stale pending and has just been expired; continue startup.
     }
 
-    // Try to reuse the latest completed/error run for this source to avoid duplicates
-    const reuse = await pool.query(
-      `SELECT id FROM runs WHERE source_id = $1 AND status IN ('completed','error')
-       ORDER BY created_at DESC LIMIT 1`,
-      [sourceId]
-    );
-    let runId: number;
-    if (reuse.rows.length > 0) {
-      runId = reuse.rows[0].id as number;
-      await pool.query(
-        `UPDATE runs SET status = $1, counters = $2, started_at = $3, completed_at = NULL, error_message = NULL, updated_at = now()
-         WHERE id = $4`,
-        [
-          externalRunner ? "pending" : "running",
-          JSON.stringify({ found: 0, uploaded: 0, errors: 0 }),
-          new Date(),
-          runId,
-        ]
-      );
-    } else {
-      const created = await payload.create({
-        collection: "runs",
-        data: {
-          source: sourceId,
-          kind: "manual",
-          maxItems: typeof maxItems === "number" && maxItems > 0 ? maxItems : 0,
-          status: externalRunner ? "pending" : "running",
-          counters: { found: 0, uploaded: 0, errors: 0 },
-          startedAt: new Date().toISOString(),
-        },
-      });
-      runId = created.id as number;
-    }
+    // Always create a fresh run row for each manual trigger.
+    // Reusing old run IDs can surface stale statuses/logs in the dashboard.
+    const created = await payload.create({
+      collection: "runs",
+      data: {
+        source: sourceId,
+        kind: "manual",
+        maxItems: typeof maxItems === "number" && maxItems > 0 ? maxItems : 0,
+        status: externalRunner ? "pending" : "running",
+        counters: { found: 0, uploaded: 0, errors: 0 },
+        startedAt: new Date().toISOString(),
+      },
+    });
+    const runId = created.id as number;
 
     // In external-runner mode, do not spawn; return run details
     if (externalRunner) {

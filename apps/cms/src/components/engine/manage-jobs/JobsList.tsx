@@ -266,7 +266,7 @@ export function JobsList() {
       const hasActive = jobsRef.current.some(
         (j) => j.status === "running" || j.status === "queued" || j.runStatus === "running"
       );
-      const nextMs = hasActive ? 15000 : 45000;
+      const nextMs = hasActive ? 25000 : 120000;
       timeout = setTimeout(() => {
         void runTick();
       }, nextMs);
@@ -276,7 +276,7 @@ export function JobsList() {
     void fetchJobs();
     timeout = setTimeout(() => {
       void runTick();
-    }, 15000);
+    }, 25000);
 
     const handleVisibilityChange = () => {
       if (!document.hidden) {
