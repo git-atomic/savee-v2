@@ -454,12 +454,12 @@ export function MetricsDashboard() {
 
           {r2Incomplete ? (
             <p className="text-xs text-red-500">
-              Some R2 metrics could not be scanned; values above may be partial.
+              Some R2 metrics failed or were sampled; values above may be partial.
             </p>
           ) : null}
 
           <p className="text-xs text-muted-foreground">
-            Increase `R2_METRICS_MAX_PAGES` if you want full-bucket counts instead of sampled scans.
+            R2 scan results are cached (`R2_METRICS_CACHE_SECONDS`) to reduce API usage.
           </p>
         </Card>
 
