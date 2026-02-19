@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import * as React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell } from "recharts";
@@ -213,18 +213,14 @@ export function MetricsDashboard() {
 
   const chartColors = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#14b8a6", "#f97316"];
 
-  const runsByStatusData = useMemo(
-    () => metrics.db.runsByStatus.map((r) => ({ status: r.status, count: r.c })),
-    [metrics.db.runsByStatus]
-  );
+  const runsByStatusData = metrics.db.runsByStatus.map((r) => ({
+    status: r.status,
+    count: r.c,
+  }));
 
-  const mediaTypeData = useMemo(
-    () =>
-      metrics.db.blocksByMediaType
-        .map((m) => ({ mediaType: m.media_type || "unknown", count: m.c }))
-        .sort((a, b) => b.count - a.count),
-    [metrics.db.blocksByMediaType]
-  );
+  const mediaTypeData = metrics.db.blocksByMediaType
+    .map((m) => ({ mediaType: m.media_type || "unknown", count: m.c }))
+    .sort((a, b) => b.count - a.count);
 
   const mediaTypeConfig: ChartConfig = {};
   mediaTypeData.forEach((item, index) => {
