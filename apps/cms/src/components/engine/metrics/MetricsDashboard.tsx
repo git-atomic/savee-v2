@@ -472,7 +472,7 @@ export function MetricsDashboard() {
 
           {r2Incomplete ? (
             <p className="text-xs text-red-500">
-              Some R2 metrics failed or were sampled; values above may be partial.
+              Some R2 metrics failed to load. No partial estimates are shown.
             </p>
           ) : null}
 

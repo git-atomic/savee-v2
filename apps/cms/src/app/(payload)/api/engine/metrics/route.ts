@@ -6,6 +6,7 @@ import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const maxDuration = 60;
 
 interface MetricsResponsePayload {
   success: boolean;
@@ -99,14 +100,6 @@ function readNumberEnv(name: string, fallback: number) {
   if (!raw) return fallback;
   const n = Number(raw);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function readOptionalPositiveIntEnv(name: string): number | null {
-  const raw = process.env[name];
-  if (!raw || raw.trim() === "") return null;
-  const n = parseInt(raw, 10);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return n;
 }
 
 function getR2Config(prefix = ""): R2BucketConfig {
@@ -226,11 +219,6 @@ async function getR2Stats(config: R2BucketConfig) {
     return emptyR2Stats(bucket ?? null);
   }
   try {
-    // Default to exact scans (no page cap) unless R2_METRICS_MAX_PAGES is set.
-    const configuredPageLimit = readOptionalPositiveIntEnv("R2_METRICS_MAX_PAGES");
-    const pageLimit = configuredPageLimit ?? Number.MAX_SAFE_INTEGER;
-    const maxScanMs = readIntEnv("R2_METRICS_MAX_SCAN_MS", 55000, 5000, 120000);
-    const deadline = Date.now() + maxScanMs;
     const client = new S3Client({
       region: "auto",
       endpoint,
@@ -240,7 +228,6 @@ async function getR2Stats(config: R2BucketConfig) {
     let totalObjects = 0;
     let totalSizeBytes = 0;
     let pagesRead = 0;
-    let truncatedByTimeBudget = false;
     do {
       const resp = await client.send(
         new ListObjectsV2Command({
@@ -258,29 +245,13 @@ async function getR2Stats(config: R2BucketConfig) {
         ? (resp.NextContinuationToken as string | undefined)
         : undefined;
       pagesRead += 1;
+    } while (continuationToken);
 
-      if (continuationToken && Date.now() >= deadline) {
-        truncatedByTimeBudget = true;
-        break;
-      }
-    } while (continuationToken && pagesRead < pageLimit);
-
-    const sampled = Boolean(continuationToken);
-    if (sampled) {
-      const reason = truncatedByTimeBudget
-        ? `time budget (${maxScanMs}ms)`
-        : configuredPageLimit
-          ? `page limit (${configuredPageLimit})`
-          : "unknown cap";
-      console.warn(
-        `[metrics] R2 scan sampled for bucket=${bucket} pages=${pagesRead} reason=${reason}`
-      );
-    }
     return {
       configured: true,
       totalObjects,
       totalSizeBytes,
-      sampled,
+      sampled: false,
       sampledPages: pagesRead,
       bucket,
       error: null,
@@ -301,7 +272,12 @@ async function getR2StatsCached(config: R2BucketConfig) {
   const cacheKey = buildR2CacheKey(config);
   const now = Date.now();
   const cached = r2StatsCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
+  if (
+    cached &&
+    cached.expiresAt > now &&
+    !cached.stats.sampled &&
+    !cached.stats.error
+  ) {
     return cached.stats;
   }
 
@@ -320,11 +296,13 @@ async function getR2StatsCached(config: R2BucketConfig) {
     return prevStats as R2ScanStats;
   }
 
-  r2StatsCache.set(cacheKey, {
-    stats,
-    expiresAt: now + cacheSeconds * 1000,
-  });
-  pruneR2StatsCache(now);
+  if (!stats.sampled && !stats.error) {
+    r2StatsCache.set(cacheKey, {
+      stats,
+      expiresAt: now + cacheSeconds * 1000,
+    });
+    pruneR2StatsCache(now);
+  }
   return stats;
 }
 
@@ -512,9 +490,7 @@ export async function GET(request: NextRequest) {
           : 0;
       const incompleteR2 =
         Boolean(primaryR2.error) ||
-        Boolean(hasSecondary && secondaryR2.error) ||
-        primaryR2.sampled ||
-        Boolean(hasSecondary && secondaryR2.sampled);
+        Boolean(hasSecondary && secondaryR2.error);
       const workerParallelism = parseInt(process.env.WORKER_PARALLELISM || "2", 10);
 
       return {
