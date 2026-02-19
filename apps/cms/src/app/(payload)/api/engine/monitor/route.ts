@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 60;
 const STALE_PENDING_MINUTES = 15;
+const STALE_RUNNING_MINUTES = 120;
 
 async function getDbConnection() {
   const payload = await getPayload({ config });
@@ -199,8 +200,11 @@ export async function POST(request: NextRequest) {
         const stalePending =
           String(active.status).toLowerCase() === "pending" &&
           ageMs > STALE_PENDING_MINUTES * 60 * 1000;
+        const staleRunning =
+          String(active.status).toLowerCase() === "running" &&
+          ageMs > STALE_RUNNING_MINUTES * 60 * 1000;
 
-        if (stalePending) {
+        if (stalePending || staleRunning) {
           try {
             await db.query(
               `UPDATE runs
@@ -210,7 +214,9 @@ export async function POST(request: NextRequest) {
                    updated_at = now()
                WHERE id = $2`,
               [
-                `Auto-expired stale pending run after ${STALE_PENDING_MINUTES} minutes`,
+                stalePending
+                  ? `Auto-expired stale pending run after ${STALE_PENDING_MINUTES} minutes`
+                  : `Auto-expired stale running run after ${STALE_RUNNING_MINUTES} minutes`,
                 active.id,
               ]
             );

@@ -33,9 +33,10 @@ export async function GET(request: NextRequest) {
     }
     const db = await getDbConnection();
     const url = new URL(request.url);
+    const defaultLimit = parseInt(process.env.PENDING_DEFAULT_LIMIT || "20", 10);
     const limit = Math.max(
       1,
-      Math.min(20, parseInt(url.searchParams.get("limit") || "4", 10))
+      Math.min(100, parseInt(url.searchParams.get("limit") || String(defaultLimit), 10))
     );
 
     const res = await db.query(
@@ -43,6 +44,7 @@ export async function GET(request: NextRequest) {
        FROM runs r
        JOIN sources s ON r.source_id = s.id
        WHERE r.status = 'pending'
+         AND COALESCE(s.status::text, '') != 'paused'
        ORDER BY r.created_at ASC
        LIMIT $1`,
       [limit]

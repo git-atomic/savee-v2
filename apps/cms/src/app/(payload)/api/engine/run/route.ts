@@ -6,6 +6,7 @@ import { spawn } from "child_process";
 import path from "path";
 
 const STALE_PENDING_MINUTES = 15;
+const STALE_RUNNING_MINUTES = 120;
 
 interface SourceData {
   url: string;
@@ -161,7 +162,10 @@ export async function POST(request: NextRequest) {
       const stalePending =
         active.status === "pending" &&
         ageMs > STALE_PENDING_MINUTES * 60 * 1000;
-      if (stalePending) {
+      const staleRunning =
+        active.status === "running" &&
+        ageMs > STALE_RUNNING_MINUTES * 60 * 1000;
+      if (stalePending || staleRunning) {
         await pool.query(
           `UPDATE runs
            SET status = 'error',
@@ -170,7 +174,9 @@ export async function POST(request: NextRequest) {
                updated_at = now()
            WHERE id = $2`,
           [
-            `Auto-expired stale pending run after ${STALE_PENDING_MINUTES} minutes without dispatch`,
+            stalePending
+              ? `Auto-expired stale pending run after ${STALE_PENDING_MINUTES} minutes without dispatch`
+              : `Auto-expired stale running run after ${STALE_RUNNING_MINUTES} minutes without heartbeat`,
             active.id,
           ]
         );

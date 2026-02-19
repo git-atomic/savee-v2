@@ -8,6 +8,8 @@ import time
 import urllib.request
 from typing import Dict, List, Tuple
 
+WORKER_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 
 def normalize_cms_base_url(raw_url: str) -> str:
     if not raw_url:
@@ -111,6 +113,11 @@ def run_one(run: Dict, max_attempts: int) -> Tuple[str, bool]:
         print("Skipping invalid run payload:", run)
         return (run_id or "unknown", False)
 
+    post_log(
+        run_id,
+        {"type": "STARTING", "status": "pending", "message": "Picked from pending queue"},
+    )
+
     delay = 2
     for attempt in range(1, max_attempts + 1):
         print(f"running: runId={run_id} attempt={attempt}/{max_attempts} url={url}")
@@ -126,6 +133,7 @@ def run_one(run: Dict, max_attempts: int) -> Tuple[str, bool]:
                 "--run-id",
                 run_id,
             ],
+            cwd=WORKER_DIR,
             check=False,
         ).returncode
 
@@ -149,6 +157,14 @@ def run_one(run: Dict, max_attempts: int) -> Tuple[str, bool]:
             time.sleep(delay)
             delay = min(delay * 2, 30)
 
+    post_log(
+        run_id,
+        {
+            "type": "ERROR",
+            "status": "error",
+            "message": f"Queue worker failed after {max_attempts} attempts",
+        },
+    )
     return (run_id, False)
 
 

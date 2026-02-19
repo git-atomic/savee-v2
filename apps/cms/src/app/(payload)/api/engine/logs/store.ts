@@ -121,19 +121,19 @@ export async function getLogs(runId: number, limit: number = 500): Promise<LogEn
     
     // Build SELECT query based on detected schema
     let selectColumns: string[];
-    let orderBy: string;
+    let orderByDesc: string;
     
     if (schema.hasLogType) {
       // Old schema: log_type, no timestamp
       selectColumns = ['id', 'run_id', 'log_type', 'url', 'status'];
-      orderBy = 'id ASC';
+      orderByDesc = 'id DESC';
     } else if (schema.hasType) {
       // New schema: type, timestamp, timing, message
-      selectColumns = ['type', 'url', 'status'];
+      selectColumns = ['id', 'type', 'url', 'status'];
       if (schema.hasTimestamp) selectColumns.unshift('timestamp');
       if (schema.hasTiming) selectColumns.push('timing');
       if (schema.hasMessage) selectColumns.push('message');
-      orderBy = schema.hasTimestamp ? 'timestamp ASC' : 'id ASC';
+      orderByDesc = schema.hasTimestamp ? 'timestamp DESC, id DESC' : 'id DESC';
     } else {
       console.error(`[getLogs] Unknown schema: neither 'type' nor 'log_type' column found`);
       return [];
@@ -144,13 +144,16 @@ export async function getLogs(runId: number, limit: number = 500): Promise<LogEn
       `SELECT ${selectColumns.join(', ')}
        FROM job_logs
        WHERE run_id = $1
-       ORDER BY ${orderBy}
+       ORDER BY ${orderByDesc}
        LIMIT $2`,
       [runId, safeLimit]
     );
 
+    // Fetch newest N rows efficiently, then return ascending for UI readability.
+    const ascRows = result.rows.slice().reverse();
+
     // Map to consistent format
-    return result.rows.map((row: any) => ({
+    return ascRows.map((row: any) => ({
       timestamp: row.timestamp instanceof Date 
         ? row.timestamp.toISOString() 
         : (typeof row.timestamp === 'string' ? row.timestamp : (row.timestamp ? new Date(row.timestamp).toISOString() : new Date().toISOString())),

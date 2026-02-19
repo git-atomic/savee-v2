@@ -97,8 +97,11 @@ function formatBytes(bytes: number): string {
 export function MetricsDashboard() {
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const inFlightRef = React.useRef(false);
 
   const fetchMetrics = async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     try {
       const response = await fetch("/api/engine/metrics", { cache: "no-store" });
       const data = await response.json();
@@ -108,6 +111,7 @@ export function MetricsDashboard() {
     } catch (error) {
       // Silently handle errors
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
   };
@@ -120,7 +124,7 @@ export function MetricsDashboard() {
         if (interval) clearInterval(interval);
         interval = setInterval(() => {
           void fetchMetrics();
-        }, 60000);
+        }, 180000);
       } else if (interval) {
         clearInterval(interval);
         interval = undefined;

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addLog, getLogs } from "./store";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 function isAuthorized(req: NextRequest): boolean {
   const token = process.env.ENGINE_MONITOR_TOKEN;
   if (!token) return true; // Allow if no token configured

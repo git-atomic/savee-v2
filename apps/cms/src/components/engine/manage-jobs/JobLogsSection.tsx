@@ -99,7 +99,6 @@ export const JobLogsSection = React.memo(function JobLogsSection({
         `/api/engine/logs/stream?runId=${encodeURIComponent(runId)}`
       );
       esRef.current = es;
-      stopPolling();
       const push = (p: any) => {
         if (!p || !p.type) return;
         const nextEntry = {
@@ -161,6 +160,9 @@ export const JobLogsSection = React.memo(function JobLogsSection({
     if (isOpen && runId) {
       setLogs([]);
       void fetchSnapshot(runId);
+      // Keep lightweight polling active even when SSE is connected.
+      // In serverless, SSE can be connected but miss cross-instance broadcasts.
+      startFallbackPolling(runId);
       attachStream(runId);
     }
     return () => {

@@ -6,20 +6,38 @@ export const runtime = "nodejs";
 export const revalidate = 0;
 export const dynamic = "force-dynamic";
 
+function resolveR2ConfigForKey(rawKey: string) {
+  const isSecondary = rawKey.startsWith("secondary://");
+  const key = isSecondary ? rawKey.replace(/^secondary:\/\//, "") : rawKey;
+
+  const endpoint = isSecondary
+    ? process.env.SECONDARY_R2_ENDPOINT_URL || process.env.R2_ENDPOINT_URL
+    : process.env.R2_ENDPOINT_URL;
+  const accessKeyId = isSecondary
+    ? process.env.SECONDARY_R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID
+    : process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = isSecondary
+    ? process.env.SECONDARY_R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_ACCESS_KEY
+    : process.env.R2_SECRET_ACCESS_KEY;
+  const bucket = isSecondary
+    ? process.env.SECONDARY_R2_BUCKET_NAME || process.env.R2_BUCKET_NAME
+    : process.env.R2_BUCKET_NAME;
+
+  return { isSecondary, key, endpoint, accessKeyId, secretAccessKey, bucket };
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const key = searchParams.get("key");
-    if (!key)
+    const rawKey = searchParams.get("key");
+    if (!rawKey)
       return NextResponse.json(
         { success: false, error: "key required" },
         { status: 400 }
       );
 
-    const endpoint = process.env.R2_ENDPOINT_URL;
-    const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-    const bucket = process.env.R2_BUCKET_NAME;
+    const { isSecondary, key, endpoint, accessKeyId, secretAccessKey, bucket } =
+      resolveR2ConfigForKey(rawKey);
     if (!endpoint || !accessKeyId || !secretAccessKey || !bucket) {
       return NextResponse.json(
         { success: false, error: "R2 env missing" },
@@ -89,7 +107,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { success: true, url },
+      { success: true, url, storage: isSecondary ? "secondary" : "primary" },
       {
         headers: {
           "Cache-Control": "no-cache, no-store, must-revalidate",

@@ -7,6 +7,7 @@ import path from "path";
 // Process tracking for pause/resume functionality
 const runningProcesses = new Map<string, ChildProcess>();
 const STALE_PENDING_MINUTES = 15;
+const STALE_RUNNING_MINUTES = 120;
 
 // Database connection for direct SQL queries
 async function getDbConnection() {
@@ -364,8 +365,11 @@ export async function POST(request: NextRequest) {
           const stalePending =
             existingStatus === "pending" &&
             ageMs > STALE_PENDING_MINUTES * 60 * 1000;
+          const staleRunning =
+            existingStatus === "running" &&
+            ageMs > STALE_RUNNING_MINUTES * 60 * 1000;
 
-          if (stalePending) {
+          if (stalePending || staleRunning) {
             await db.query(
               `UPDATE runs
                SET status = 'error',
@@ -374,7 +378,9 @@ export async function POST(request: NextRequest) {
                    updated_at = now()
                WHERE id = $2`,
               [
-                `Auto-expired stale pending run after ${STALE_PENDING_MINUTES} minutes without dispatch`,
+                stalePending
+                  ? `Auto-expired stale pending run after ${STALE_PENDING_MINUTES} minutes without dispatch`
+                  : `Auto-expired stale running run after ${STALE_RUNNING_MINUTES} minutes without heartbeat`,
                 existing.id,
               ]
             );
