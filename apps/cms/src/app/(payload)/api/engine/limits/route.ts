@@ -6,6 +6,7 @@ import config from "@payload-config";
 export const runtime = "nodejs";
 export const revalidate = 0;
 export const dynamic = "force-dynamic";
+const BYTES_PER_DECIMAL_GB = 1_000_000_000;
 
 async function getDbStats() {
   const payload = await getPayload({ config });
@@ -34,7 +35,7 @@ async function getR2Stats() {
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
   const bucket = process.env.R2_BUCKET_NAME;
   if (!endpoint || !accessKeyId || !secretAccessKey || !bucket) {
-    return { totalObjects: 0, totalSizeBytes: 0, usagePercent: 0 };
+    return { totalObjects: 0, totalSizeBytes: 0 };
   }
   const client = new S3Client({
     region: "auto",
@@ -63,9 +64,7 @@ async function getR2Stats() {
       : undefined;
     safety += 1;
   } while (continuationToken && safety < 1000);
-  const tenGb = 10 * 1024 * 1024 * 1024;
-  const usagePercent = Math.min(100, (totalSizeBytes / tenGb) * 100);
-  return { totalObjects, totalSizeBytes, usagePercent };
+  return { totalObjects, totalSizeBytes };
 }
 
 export async function GET(req: NextRequest) {
@@ -75,7 +74,9 @@ export async function GET(req: NextRequest) {
     // Soft quotas (tunable via env)
     const r2SoftGb = Number(process.env.R2_SOFT_LIMIT_GB || 9.5);
     const dbSoftBlocks = Number(process.env.DB_SOFT_LIMIT_BLOCKS || 100000);
-    const r2LimitBytes = r2SoftGb * 1024 * 1024 * 1024;
+    const r2LimitBytes = r2SoftGb * BYTES_PER_DECIMAL_GB;
+    const r2UsagePercent =
+      r2LimitBytes > 0 ? Math.min(100, (r2.totalSizeBytes / r2LimitBytes) * 100) : 0;
     const r2NearLimit = r2.totalSizeBytes >= r2LimitBytes;
     const dbNearLimit = db.blocks >= dbSoftBlocks;
     return NextResponse.json({
@@ -83,7 +84,7 @@ export async function GET(req: NextRequest) {
       r2: {
         totalObjects: r2.totalObjects,
         totalSizeBytes: r2.totalSizeBytes,
-        usagePercent: r2.usagePercent,
+        usagePercent: r2UsagePercent,
         softLimitGb: r2SoftGb,
         nearLimit: r2NearLimit,
       },

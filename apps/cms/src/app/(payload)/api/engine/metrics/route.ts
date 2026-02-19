@@ -37,6 +37,8 @@ interface CachedR2StatsEntry {
   stats: R2ScanStats;
 }
 
+const BYTES_PER_DECIMAL_GB = 1_000_000_000;
+
 function normalizeR2Token(v?: string) {
   return String(v || "").trim().toLowerCase().replace(/\/+$/, "");
 }
@@ -158,7 +160,7 @@ function buildR2Usage(stats: R2ScanStats, softLimitGb: number) {
   const safeSoftLimitGb = Number.isFinite(softLimitGb) && softLimitGb > 0
     ? softLimitGb
     : 9.5;
-  const softLimitBytes = safeSoftLimitGb * 1024 * 1024 * 1024;
+  const softLimitBytes = safeSoftLimitGb * BYTES_PER_DECIMAL_GB;
   const usagePercent =
     softLimitBytes > 0
       ? Math.min(100, (stats.totalSizeBytes / softLimitBytes) * 100)
@@ -169,7 +171,7 @@ function buildR2Usage(stats: R2ScanStats, softLimitGb: number) {
     bucket: stats.bucket,
     totalObjects: stats.totalObjects,
     totalSizeBytes: stats.totalSizeBytes,
-    totalSizeGb: stats.totalSizeBytes / (1024 * 1024 * 1024),
+    totalSizeGb: stats.totalSizeBytes / BYTES_PER_DECIMAL_GB,
     usagePercent,
     softLimitGb: safeSoftLimitGb,
     softLimitBytes,
@@ -263,15 +265,19 @@ async function getR2Stats(config: R2BucketConfig) {
   }
 }
 
-async function getR2StatsCached(config: R2BucketConfig) {
+async function getR2StatsCached(
+  config: R2BucketConfig,
+  options?: { forceRefresh?: boolean }
+) {
   if (!isR2ConfigComplete(config)) {
     return emptyR2Stats(config.bucket ?? null);
   }
 
-  const cacheSeconds = readIntEnv("R2_METRICS_CACHE_SECONDS", 1800, 60, 86400);
+  const forceRefresh = Boolean(options?.forceRefresh);
+  const cacheSeconds = readIntEnv("R2_METRICS_CACHE_SECONDS", 300, 60, 86400);
   const cacheKey = buildR2CacheKey(config);
   const now = Date.now();
-  const cached = r2StatsCache.get(cacheKey);
+  const cached = forceRefresh ? undefined : r2StatsCache.get(cacheKey);
   if (
     cached &&
     cached.expiresAt > now &&
@@ -287,7 +293,7 @@ async function getR2StatsCached(config: R2BucketConfig) {
   const nextIncomplete = Boolean(stats.sampled || stats.error);
 
   // Prefer an older full scan over replacing it with a partial/error result.
-  if (prevComplete && nextIncomplete) {
+  if (!forceRefresh && prevComplete && nextIncomplete) {
     r2StatsCache.set(cacheKey, {
       stats: prevStats as R2ScanStats,
       expiresAt: now + cacheSeconds * 1000,
@@ -457,10 +463,10 @@ export async function GET(request: NextRequest) {
                WHERE day >= CURRENT_DATE - INTERVAL '7 days'`
             )
           : Promise.resolve({ rows: [{ c: 0 }] } as any),
-        getR2StatsCached(primaryR2Config),
+        getR2StatsCached(primaryR2Config, { forceRefresh }),
         secondarySameAsPrimary
           ? Promise.resolve(emptyR2Stats(secondaryR2Config.bucket ?? null))
-          : getR2StatsCached(secondaryR2Config),
+          : getR2StatsCached(secondaryR2Config, { forceRefresh }),
       ]);
 
       const primarySoftLimitGb = readNumberEnv("R2_SOFT_LIMIT_GB", 9.5);
@@ -539,9 +545,9 @@ export async function GET(request: NextRequest) {
           totalObjects:
             primaryR2.totalObjects + (hasSecondary ? secondaryR2.totalObjects : 0),
           totalSizeBytes: combinedSizeBytes,
-          totalSizeGb: combinedSizeBytes / (1024 * 1024 * 1024),
+          totalSizeGb: combinedSizeBytes / BYTES_PER_DECIMAL_GB,
           usagePercent: combinedUsagePercent,
-          softLimitGb: combinedLimitBytes / (1024 * 1024 * 1024),
+          softLimitGb: combinedLimitBytes / BYTES_PER_DECIMAL_GB,
           softLimitBytes: combinedLimitBytes,
           nearLimit: combinedLimitBytes > 0 && combinedSizeBytes >= combinedLimitBytes,
           sampled: primaryR2.sampled || (hasSecondary ? secondaryR2.sampled : false),

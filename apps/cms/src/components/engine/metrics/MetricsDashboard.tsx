@@ -79,6 +79,8 @@ interface MetricsData {
   };
 }
 
+const BYTES_PER_DECIMAL_GB = 1_000_000_000;
+
 function formatDate(value: string | null): string {
   if (!value) return "Never";
   try {
@@ -102,8 +104,8 @@ function formatDate(value: string | null): string {
 function formatBytes(bytes: number): string {
   if (!bytes) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${units[i]}`;
+  const i = Math.floor(Math.log(bytes) / Math.log(1000));
+  return `${(bytes / Math.pow(1000, i)).toFixed(2)} ${units[i]}`;
 }
 
 function progressColor(percent: number, nearLimit: boolean) {
@@ -271,7 +273,7 @@ export function MetricsDashboard() {
     totalSizeGb: 0,
     usagePercent: 0,
     softLimitGb: metrics.r2.softLimitGb || 9.5,
-    softLimitBytes: metrics.r2.softLimitBytes || 9.5 * 1024 * 1024 * 1024,
+    softLimitBytes: metrics.r2.softLimitBytes || 9.5 * BYTES_PER_DECIMAL_GB,
     nearLimit: false,
     sampled: false,
     sampledPages: 0,
