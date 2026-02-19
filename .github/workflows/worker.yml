@@ -11,17 +11,14 @@ on:
         description: 'Source ID to process'
         required: true
         type: string
-  # Run on push to main only (skip on feature branches to avoid PR failures)
-  push:
-    branches:
-      - main
-    paths:
-      - 'apps/worker/**'
-      - '.github/workflows/worker.yml'
+  # Push trigger disabled to keep free-tier usage minimal.
 
 jobs:
   worker:
     runs-on: ubuntu-latest
+    concurrency:
+      group: worker-manual
+      cancel-in-progress: false
     timeout-minutes: 60  # Timeout after 1 hour
     
     steps:
@@ -61,14 +58,18 @@ jobs:
       - name: Run worker
         working-directory: apps/worker
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || vars.DATABASE_URL }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL || vars.R2_ENDPOINT_URL }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || vars.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || vars.R2_SECRET_ACCESS_KEY }}
           COOKIES_JSON: ${{ secrets.COOKIES_JSON || secrets.SAVEE_COOKIES_JSON || vars.COOKIES_JSON || vars.SAVEE_COOKIES_JSON }}
           COOKIES_JSON_B64: ${{ secrets.COOKIES_JSON_B64 || vars.COOKIES_JSON_B64 }}
           COOKIES_PATH: ./savee_cookies.json
+          JOB_CONCURRENCY: ${{ secrets.JOB_CONCURRENCY || vars.JOB_CONCURRENCY || '1' }}
+          ITEM_CONCURRENCY: ${{ secrets.ITEM_CONCURRENCY || vars.ITEM_CONCURRENCY || '2' }}
+          WORKER_PARALLELISM: ${{ secrets.WORKER_PARALLELISM || vars.WORKER_PARALLELISM || '2' }}
+          WORKER_MAX_ATTEMPTS: ${{ secrets.WORKER_MAX_ATTEMPTS || vars.WORKER_MAX_ATTEMPTS || '3' }}
           RESOLVE_SOURCE_URLS: "false"
         continue-on-error: true
         run: |

@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-22.04
     concurrency:
       group: engine-monitor
-      cancel-in-progress: true
+      cancel-in-progress: false
     timeout-minutes: 45
     steps:
       - name: Checkout repository
@@ -74,9 +74,9 @@ jobs:
 
       - name: Call /api/engine/monitor (manual trigger)
         env:
-          CMS_URL: ${{ secrets.CMS_URL }}
-          MONITOR_URL: ${{ secrets.MONITOR_URL }}
-          ENGINE_MONITOR_TOKEN: ${{ secrets.ENGINE_MONITOR_TOKEN }}
+          CMS_URL: ${{ secrets.CMS_URL || vars.CMS_URL }}
+          MONITOR_URL: ${{ secrets.MONITOR_URL || vars.MONITOR_URL }}
+          ENGINE_MONITOR_TOKEN: ${{ secrets.ENGINE_MONITOR_TOKEN || vars.ENGINE_MONITOR_TOKEN }}
         run: |
           norm() { echo "$1" | sed -E 's#/+$##' | sed -E 's#/admin$##' | sed -E 's#/api$##'; }
           CMS_BASE=$(norm "$CMS_URL")
@@ -119,21 +119,23 @@ jobs:
 
       - name: Run pending runs (Python worker)
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || vars.DATABASE_URL }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL || vars.R2_ENDPOINT_URL }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID || vars.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY || vars.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME || vars.R2_BUCKET_NAME }}
           R2_REGION: auto
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY || vars.SECRET_KEY }}
           COOKIES_JSON: ${{ secrets.COOKIES_JSON || secrets.SAVEE_COOKIES_JSON || vars.COOKIES_JSON || vars.SAVEE_COOKIES_JSON }}
           COOKIES_JSON_B64: ${{ secrets.COOKIES_JSON_B64 || vars.COOKIES_JSON_B64 }}
           COOKIES_PATH: ${{ secrets.COOKIES_PATH || vars.COOKIES_PATH }}
-          JOB_CONCURRENCY: ${{ secrets.JOB_CONCURRENCY }}
-          ITEM_CONCURRENCY: ${{ secrets.ITEM_CONCURRENCY }}
-          CMS_URL: ${{ secrets.CMS_URL }}
-          ENGINE_MONITOR_TOKEN: ${{ secrets.ENGINE_MONITOR_TOKEN }}
-          WORKER_PARALLELISM: ${{ secrets.WORKER_PARALLELISM }}
+          JOB_CONCURRENCY: ${{ secrets.JOB_CONCURRENCY || vars.JOB_CONCURRENCY || '1' }}
+          ITEM_CONCURRENCY: ${{ secrets.ITEM_CONCURRENCY || vars.ITEM_CONCURRENCY || '2' }}
+          CMS_URL: ${{ secrets.CMS_URL || vars.CMS_URL }}
+          ENGINE_MONITOR_TOKEN: ${{ secrets.ENGINE_MONITOR_TOKEN || vars.ENGINE_MONITOR_TOKEN }}
+          WORKER_PARALLELISM: ${{ secrets.WORKER_PARALLELISM || vars.WORKER_PARALLELISM || '2' }}
+          WORKER_MAX_ATTEMPTS: ${{ secrets.WORKER_MAX_ATTEMPTS || vars.WORKER_MAX_ATTEMPTS || '3' }}
+          PENDING_FETCH_LIMIT: ${{ secrets.PENDING_FETCH_LIMIT || vars.PENDING_FETCH_LIMIT || '20' }}
           RESOLVE_SOURCE_URLS: "false"
         run: |
           cd apps/worker
