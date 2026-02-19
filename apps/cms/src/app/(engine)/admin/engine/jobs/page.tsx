@@ -4,6 +4,9 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { JobsList } from "@/components/engine/manage-jobs/JobsList";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function JobsPage() {
   const payload = await getPayload({ config: configPromise });
   const { user } = await payload.auth({ headers: await headers() });

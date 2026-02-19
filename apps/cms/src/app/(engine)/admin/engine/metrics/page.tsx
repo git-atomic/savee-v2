@@ -4,6 +4,9 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { MetricsDashboard } from "@/components/engine/metrics/MetricsDashboard";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function MetricsPage() {
   const payload = await getPayload({ config: configPromise });
   const { user } = await payload.auth({ headers: await headers() });

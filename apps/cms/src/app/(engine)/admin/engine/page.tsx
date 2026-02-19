@@ -4,6 +4,9 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { ComponentExample } from "./EngineClient";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function EnginePage() {
   const payload = await getPayload({ config: configPromise });
   const { user } = await payload.auth({ headers: await headers() });
