@@ -144,10 +144,10 @@ export async function POST(request: NextRequest) {
     // Find all active sources (exclude 'blocks' as they are strictly one-off)
     const sourcesRes = await db.query(
       requestedSourceId
-        ? `SELECT id, url, interval_seconds, disable_backoff
+        ? `SELECT id, url, source_type, username, interval_seconds, disable_backoff
            FROM sources
            WHERE id = $1 AND status != 'paused'`
-        : `SELECT id, url, interval_seconds, disable_backoff
+        : `SELECT id, url, source_type, username, interval_seconds, disable_backoff
            FROM sources
            WHERE status = 'active' AND source_type != 'blocks'
            ORDER BY updated_at DESC
@@ -167,12 +167,29 @@ export async function POST(request: NextRequest) {
 
     for (const row of sourcesRes.rows as Array<{
       id: number;
-      url: string;
+      url: string | null;
+      source_type?: string | null;
+      username?: string | null;
       interval_seconds?: number | null;
       disable_backoff?: boolean;
     }>) {
       const sourceId = row.id;
-      const url = row.url;
+      let effectiveUrl = String(row.url || "").trim();
+      if (!effectiveUrl) {
+        const sourceType = String(row.source_type || "").toLowerCase();
+        const username = String(row.username || "").trim();
+        if (sourceType === "home") effectiveUrl = "https://savee.com/";
+        else if (sourceType === "pop") effectiveUrl = "https://savee.com/pop/";
+        else if (sourceType === "user" && username)
+          effectiveUrl = `https://savee.com/${username}/`;
+      }
+      if (!effectiveUrl) {
+        skipped.push({ sourceId, reason: "missing source url" });
+        continue;
+      }
+      if (!/^https?:\/\//i.test(effectiveUrl)) {
+        effectiveUrl = `https://${effectiveUrl.replace(/^\/+/, "")}`;
+      }
       const overrideIntervalSec =
         typeof row.interval_seconds === "number" &&
         !Number.isNaN(row.interval_seconds)
@@ -322,10 +339,16 @@ export async function POST(request: NextRequest) {
         if (externalRunner) {
           // Do not spawn a worker here. Return details for an external runner to execute.
           started.push({ sourceId, runId });
-          startedDetails.push({ sourceId, runId, url, maxItems });
+          startedDetails.push({ sourceId, runId, url: effectiveUrl, maxItems });
           startedCount += 1;
         } else {
-          await startWorkerProcess(sourceId, runId, url, maxItems ?? 0, db);
+          await startWorkerProcess(
+            sourceId,
+            runId,
+            effectiveUrl,
+            maxItems ?? 0,
+            db
+          );
           started.push({ sourceId, runId });
           startedCount += 1;
         }

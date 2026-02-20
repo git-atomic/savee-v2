@@ -86,6 +86,8 @@ def fetch_pending_runs(limit: int) -> List[Dict]:
                         "url": p.get("url"),
                         "runId": p.get("runId"),
                         "maxItems": p.get("maxItems") or 0,
+                        "sourceType": p.get("sourceType"),
+                        "username": p.get("username"),
                     }
                 )
     except Exception as e:
@@ -105,17 +107,49 @@ def dedupe_runs(runs: List[Dict]) -> List[Dict]:
     return deduped
 
 
+def derive_source_url(source_type: str, username: str) -> str:
+    st = (source_type or "").strip().lower()
+    un = (username or "").strip().lstrip("@")
+    if st == "home":
+        return "https://savee.com/"
+    if st == "pop":
+        return "https://savee.com/pop/"
+    if st == "user" and un:
+        return f"https://savee.com/{un}/"
+    return ""
+
+
 def run_one(run: Dict, max_attempts: int) -> Tuple[str, bool]:
     run_id = str(run.get("runId") or "").strip()
     url = str(run.get("url") or "").strip()
+    source_type = str(run.get("sourceType") or "").strip()
+    username = str(run.get("username") or "").strip()
     max_items = int(run.get("maxItems") or 0)
+    if not url:
+        url = derive_source_url(source_type, username)
+    if url and not re.match(r"^https?://", url, flags=re.IGNORECASE):
+        url = f"https://{url.lstrip('/')}"
     if not run_id or not url:
         print("Skipping invalid run payload:", run)
+        post_log(
+            run_id,
+            {
+                "type": "ERROR",
+                "status": "error",
+                "url": url,
+                "message": "Pending run missing usable URL",
+            },
+        )
         return (run_id or "unknown", False)
 
     post_log(
         run_id,
-        {"type": "STARTING", "status": "pending", "message": "Picked from pending queue"},
+        {
+            "type": "STARTING",
+            "status": "pending",
+            "url": url,
+            "message": "Picked from pending queue",
+        },
     )
 
     delay = 2
@@ -140,19 +174,32 @@ def run_one(run: Dict, max_attempts: int) -> Tuple[str, bool]:
         if code == 0:
             post_log(
                 run_id,
-                {"type": "RETRY", "status": "success", "message": "Completed"},
+                {
+                    "type": "RETRY",
+                    "status": "success",
+                    "url": url,
+                    "message": "Completed",
+                },
             )
             return (run_id, True)
 
         msg = f"Attempt {attempt}/{max_attempts} failed with exit code {code}"
         print(msg, f"(runId={run_id})")
-        post_log(run_id, {"type": "RETRY", "status": "error", "message": msg})
+        post_log(
+            run_id,
+            {"type": "RETRY", "status": "error", "url": url, "message": msg},
+        )
         if attempt < max_attempts:
             wait_msg = f"Retrying in {delay}s"
             print(wait_msg, f"(runId={run_id})")
             post_log(
                 run_id,
-                {"type": "RETRY", "status": "pending", "message": wait_msg},
+                {
+                    "type": "RETRY",
+                    "status": "pending",
+                    "url": url,
+                    "message": wait_msg,
+                },
             )
             time.sleep(delay)
             delay = min(delay * 2, 30)
@@ -162,6 +209,7 @@ def run_one(run: Dict, max_attempts: int) -> Tuple[str, bool]:
         {
             "type": "ERROR",
             "status": "error",
+            "url": url,
             "message": f"Queue worker failed after {max_attempts} attempts",
         },
     )

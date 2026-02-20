@@ -1188,7 +1188,10 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
             await session.commit()
             
             # Get the appropriate iterator for real-time processing
-            # Get the appropriate iterator for real-time processing
+            source_type = (
+                SourceTypeEnum.blocks if bulk_urls else _detect_source_type(url)
+            )
+            savee_user_id = None
             if bulk_urls:
                 # For bulk, we iterate URLs directly to handle errors per URL correctly
                 # Create crawler for bulk processing
@@ -1318,9 +1321,6 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                 # After bulk loop, skip the main listing loop
                 item_iterator = [] # Empty iterator just to satisfy the next lines
             else:
-                source_type = _detect_source_type(url)
-                savee_user_id = None
-                
                 if source_type == SourceTypeEnum.home:
                     item_iterator = scraper.scrape_home_iterator(max_items=max_items)
                 elif source_type == SourceTypeEnum.pop:
@@ -1675,6 +1675,23 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                 counters['skipped'] = max(0, processed_count - db_uploaded - calculated_errors)
             except Exception as reconcile_err:
                 logger.error(f"Failed to reconcile counters for run {run_id}: {reconcile_err}")
+
+            # Guard against false-positive "successful" runs that discovered nothing
+            # on listing sources. This lets queue retries recover transient listing
+            # failures (cookies/session/selectors) instead of silently completing.
+            if (
+                source_type in (SourceTypeEnum.home, SourceTypeEnum.pop)
+                and int(counters.get('found', 0) or 0) == 0
+                and int(counters.get('uploaded', 0) or 0) == 0
+            ):
+                empty_msg = (
+                    "No items discovered for listing source; likely auth/session "
+                    "or listing parse issue"
+                )
+                await log_error(run_id, url, empty_msg)
+                await update_run_status(session, run_id, RunStatusEnum.error, counters, empty_msg)
+                await session.commit()
+                raise RuntimeError(empty_msg)
 
             # Mark run as completed
             await update_run_status(session, run_id, RunStatusEnum.completed, counters)

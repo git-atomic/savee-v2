@@ -40,22 +40,67 @@ export async function GET(request: NextRequest) {
     );
 
     const res = await db.query(
-      `SELECT r.id as run_id, r.max_items, s.url, s.id as source_id
+      `SELECT r.id as run_id, r.max_items, s.url, s.id as source_id, s.source_type, s.username
        FROM runs r
        JOIN sources s ON r.source_id = s.id
        WHERE r.status = 'pending'
-         AND COALESCE(s.status::text, '') != 'paused'
+          AND COALESCE(s.status::text, '') != 'paused'
        ORDER BY r.created_at ASC
        LIMIT $1`,
       [limit]
     );
 
-    const pending = res.rows.map((row: any) => ({
-      sourceId: Number(row.source_id),
-      runId: Number(row.run_id),
-      url: String(row.url),
-      maxItems: row.max_items === null ? null : Number(row.max_items),
-    }));
+    const pending: Array<{
+      sourceId: number;
+      runId: number;
+      url: string;
+      maxItems: number | null;
+      sourceType?: string;
+      username?: string;
+    }> = [];
+    for (const row of res.rows as Array<{
+      source_id: number;
+      run_id: number;
+      max_items: number | null;
+      url: string | null;
+      source_type: string | null;
+      username: string | null;
+    }>) {
+      let effectiveUrl = String(row.url || "").trim();
+      const sourceType = String(row.source_type || "").toLowerCase();
+      const username = String(row.username || "").trim();
+      if (!effectiveUrl) {
+        if (sourceType === "home") effectiveUrl = "https://savee.com/";
+        else if (sourceType === "pop") effectiveUrl = "https://savee.com/pop/";
+        else if (sourceType === "user" && username)
+          effectiveUrl = `https://savee.com/${username}/`;
+      }
+      if (!effectiveUrl) {
+        try {
+          await db.query(
+            `UPDATE runs
+             SET status = 'error',
+                 error_message = $1,
+                 completed_at = now(),
+                 updated_at = now()
+             WHERE id = $2`,
+            ["No usable source URL for pending run", Number(row.run_id)]
+          );
+        } catch {}
+        continue;
+      }
+      if (!/^https?:\/\//i.test(effectiveUrl)) {
+        effectiveUrl = `https://${effectiveUrl.replace(/^\/+/, "")}`;
+      }
+      pending.push({
+        sourceId: Number(row.source_id),
+        runId: Number(row.run_id),
+        url: effectiveUrl,
+        maxItems: row.max_items === null ? null : Number(row.max_items),
+        sourceType: sourceType || undefined,
+        username: username || undefined,
+      });
+    }
 
     return NextResponse.json({ success: true, pending });
   } catch (error) {
