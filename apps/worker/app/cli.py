@@ -1483,7 +1483,7 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                         # Even if we skip upload, record provenance so feeds are accurate
                         try:
                             from sqlalchemy import select as _select
-                            from app.models import BlockSource, Block
+                            from app.models import BlockSource
                             from sqlalchemy.dialects.postgresql import insert as pg_insert
                             block_id_row = await session.execute(
                                 _select(Block.id).where(Block.external_id == item.external_id)
@@ -1499,7 +1499,6 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                                 await session.execute(bs_stmt)
                                 # If this is a user source, create user-block relation too
                                 if savee_user_id:
-                                    from app.models import UserBlock
                                     ub_stmt = pg_insert(UserBlock).values(
                                         user_id=savee_user_id,
                                         block_id=int(existing_block_id)
