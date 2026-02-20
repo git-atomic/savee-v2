@@ -90,6 +90,14 @@ interface BlockMediaUrlOptions {
   preferProxy?: boolean;
 }
 
+function isAbsoluteHttpUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
+export function getRemoteMediaProxyUrl(url: string): string {
+  return `/api/media?url=${encodeURIComponent(url)}`;
+}
+
 export function getBlockMediaUrl(
   block: Block,
   options: BlockMediaUrlOptions = {}
@@ -136,8 +144,10 @@ export function getBlockMediaUrl(
     return `/api/media?key=${encodeURIComponent(block.r2_key)}`;
   }
 
-  if (block.video_url) {
-    return block.video_url;
+  if (block.video_url && isAbsoluteHttpUrl(block.video_url)) {
+    return preferProxy
+      ? getRemoteMediaProxyUrl(block.video_url)
+      : block.video_url;
   }
 
   return "";

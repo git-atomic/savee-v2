@@ -10,7 +10,11 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import type { Block } from "@/types/block";
-import { getBlockMediaUrl, getBlockVideoUrl } from "@/lib/api";
+import {
+  getBlockMediaUrl,
+  getBlockVideoUrl,
+  getRemoteMediaProxyUrl,
+} from "@/lib/api";
 import { getDeterministicAspectRatio } from "@/lib/masonry-utils";
 import { useIntersectionObserverPool } from "@/hooks/use-intersection-observer-pool";
 
@@ -67,33 +71,20 @@ function extractAspectRatioFromMetadata(block: Block): number | null {
   return null;
 }
 
-function getDominantColor(block: Block): string | null {
-  if (
-    block.color_hexes &&
-    Array.isArray(block.color_hexes) &&
-    block.color_hexes.length > 0
-  ) {
-    const firstColor = block.color_hexes[0];
-    if (typeof firstColor === "string" && firstColor.startsWith("#")) {
-      return firstColor;
-    }
+function dedupeUrlCandidates(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const next = typeof value === "string" ? value.trim() : "";
+    if (!next || seen.has(next)) continue;
+    seen.add(next);
+    out.push(next);
   }
+  return out;
+}
 
-  if (block.colors && Array.isArray(block.colors) && block.colors.length > 0) {
-    const firstColor = block.colors[0];
-    if (
-      typeof firstColor === "object" &&
-      firstColor !== null &&
-      "r" in firstColor
-    ) {
-      const r = (firstColor as { r: number }).r;
-      const g = (firstColor as { g: number }).g ?? r;
-      const b = (firstColor as { b: number }).b ?? r;
-      return `rgb(${r}, ${g}, ${b})`;
-    }
-  }
-
-  return null;
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
 }
 
 function BlockCardComponent({
@@ -103,12 +94,35 @@ function BlockCardComponent({
 }: BlockCardProps) {
   const router = useRouter();
   const wasPreviouslyLoaded = loadedBlocksCache.has(block.id);
+  const imageCandidates = useMemo(() => {
+    const initial = getBlockMediaUrl(block, { preferProxy: false });
+    const r2Fallback = block.r2_key
+      ? `/api/media?key=${encodeURIComponent(block.r2_key)}`
+      : null;
+    const remoteFallbacks = dedupeUrlCandidates([block.thumbnail_url, block.image_url])
+      .filter(isHttpUrl)
+      .map((url) => getRemoteMediaProxyUrl(url));
+
+    return dedupeUrlCandidates([
+      initial,
+      block.thumbnail_url,
+      block.image_url,
+      r2Fallback,
+      ...remoteFallbacks,
+    ]);
+  }, [
+    block.id,
+    block.media_type,
+    block.video_url,
+    block.thumbnail_url,
+    block.image_url,
+    block.r2_key,
+  ]);
 
   // State management
-  const [imageSrc, setImageSrc] = useState<string>(() =>
-    getBlockMediaUrl(block, { preferProxy: false })
-  );
+  const [imageSrc, setImageSrc] = useState<string>(() => imageCandidates[0] || "");
   const [isLoaded, setIsLoaded] = useState(wasPreviouslyLoaded);
+  const [isSharp, setIsSharp] = useState(wasPreviouslyLoaded);
   const [shouldLoad, setShouldLoad] = useState(priority || wasPreviouslyLoaded);
   const [isHovered, setIsHovered] = useState(false);
   const [isVideoLoaded, setIsVideoLoaded] = useState(wasPreviouslyLoaded);
@@ -128,13 +142,12 @@ function BlockCardComponent({
   const timeUpdateRafRef = useRef<number | null>(null);
   const lastTimeUpdateRef = useRef<number>(0);
   const loopTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const attemptedImageFallbackRef = useRef(false);
+  const imageRevealTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const failedImageSourcesRef = useRef<Set<string>>(new Set());
 
   // Computed values
   const isVideo = block.media_type === "video" || Boolean(block.video_url);
   const videoUrl = getBlockVideoUrl(block);
-  const dominantColor = getDominantColor(block);
-  const skeletonColor = dominantColor || "var(--muted)";
   const aspectRatio = localAspectRatio ?? propAspectRatio;
   const displayAspectRatio =
     aspectRatio || getDeterministicAspectRatio(block.id) || 1;
@@ -148,6 +161,21 @@ function BlockCardComponent({
       shouldLoadRef.current = true;
     }
   }, [shouldLoad]);
+
+  // Reset media state when card data changes.
+  useEffect(() => {
+    failedImageSourcesRef.current.clear();
+    if (imageRevealTimeoutRef.current) {
+      clearTimeout(imageRevealTimeoutRef.current);
+      imageRevealTimeoutRef.current = null;
+    }
+
+    setImageSrc(imageCandidates[0] || "");
+    setIsLoaded(wasPreviouslyLoaded);
+    setIsSharp(wasPreviouslyLoaded);
+    setIsVideoLoaded(wasPreviouslyLoaded);
+    setHasVideoPlayed(false);
+  }, [block.id, imageCandidates, wasPreviouslyLoaded]);
 
   // Intersection observer for lazy loading
   const handleIntersection = useCallback(
@@ -377,6 +405,9 @@ function BlockCardComponent({
       if (timeUpdateRafRef.current) {
         cancelAnimationFrame(timeUpdateRafRef.current);
       }
+      if (imageRevealTimeoutRef.current) {
+        clearTimeout(imageRevealTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -399,8 +430,18 @@ function BlockCardComponent({
     // Regardless of media type, once the thumbnail has loaded we can
     // consider the block visually loaded so the skeleton disappears.
     setIsLoaded(true);
+    if (wasPreviouslyLoaded) {
+      setIsSharp(true);
+    } else {
+      if (imageRevealTimeoutRef.current) {
+        clearTimeout(imageRevealTimeoutRef.current);
+      }
+      imageRevealTimeoutRef.current = setTimeout(() => {
+        setIsSharp(true);
+      }, 45);
+    }
     loadedBlocksCache.add(block.id);
-  }, [isVideo, aspectRatio, propAspectRatio, block.id]);
+  }, [isVideo, aspectRatio, propAspectRatio, block.id, wasPreviouslyLoaded]);
 
   const handleVideoLoadedData = useCallback(() => {
     const video = videoRef.current;
@@ -413,28 +454,31 @@ function BlockCardComponent({
       }
       setIsVideoLoaded(true);
       setIsLoaded(true);
+      setIsSharp(true);
       loadedBlocksCache.add(block.id);
     }
   }, [aspectRatio, propAspectRatio, block.id]);
 
   const handleImageError = useCallback(() => {
-    const fallback =
-      block.thumbnail_url || block.image_url || block.video_url || "";
+    if (imageSrc) {
+      failedImageSourcesRef.current.add(imageSrc);
+    }
 
-    if (
-      !attemptedImageFallbackRef.current &&
-      fallback &&
-      fallback !== imageSrc
-    ) {
-      attemptedImageFallbackRef.current = true;
-      setImageSrc(fallback);
+    const nextFallback = imageCandidates.find(
+      (candidate) => !failedImageSourcesRef.current.has(candidate)
+    );
+
+    if (nextFallback && nextFallback !== imageSrc) {
+      setImageSrc(nextFallback);
       setIsLoaded(false);
+      setIsSharp(false);
       return;
     }
 
     setImageSrc("");
     setIsLoaded(false);
-  }, [block, imageSrc]);
+    setIsSharp(false);
+  }, [imageCandidates, imageSrc]);
 
   const handleVideoError = useCallback(() => {
     if (imageSrc && !isLoaded) {
@@ -451,7 +495,7 @@ function BlockCardComponent({
   }, []);
 
   const handleClick = useCallback(() => {
-    router.push(`/b/${block.external_id}`);
+    router.push(`/b/${block.external_id}`, { scroll: false });
   }, [router, block.external_id]);
 
   // Memoized video event handlers
@@ -553,13 +597,22 @@ function BlockCardComponent({
         }}
       >
         <div
+          className="absolute inset-0 bg-muted/55"
+          style={{
+            opacity: isLoaded ? 0 : 1,
+            transition: "opacity 260ms cubic-bezier(0.22, 1, 0.36, 1)",
+          }}
+          aria-hidden="true"
+        />
+        <div
           className="absolute inset-0"
           style={{
-            backgroundColor: skeletonColor,
-            filter: isLoaded ? "blur(0px)" : "blur(14px)",
-            transform: isLoaded ? "scale(1)" : "scale(1.04)",
-            opacity: isLoaded ? 0 : 1,
-            transition: "opacity 220ms ease-out, filter 220ms ease-out, transform 220ms ease-out",
+            opacity: isLoaded ? 0 : 0.7,
+            background:
+              "linear-gradient(110deg, rgba(255,255,255,0.02) 8%, rgba(255,255,255,0.1) 18%, rgba(255,255,255,0.02) 33%)",
+            backgroundSize: "200% 100%",
+            animation: "shimmer 1.5s linear infinite",
+            transition: "opacity 220ms ease-out",
           }}
           aria-hidden="true"
         />
@@ -582,10 +635,12 @@ function BlockCardComponent({
                     onLoad={handleImageLoad}
                     onError={handleImageError}
                     style={{
-                      opacity: hasVideoPlayed ? 0 : 1,
+                      opacity: hasVideoPlayed ? 0 : isLoaded ? 1 : 0.9,
+                      filter: isSharp ? "blur(0px)" : "blur(16px)",
+                      transform: isSharp ? "scale(1)" : "scale(1.03)",
                       transition: wasPreviouslyLoaded
                         ? "none"
-                        : "opacity 0.25s ease-out",
+                        : "opacity 240ms ease-out, filter 320ms cubic-bezier(0.22, 1, 0.36, 1), transform 320ms cubic-bezier(0.22, 1, 0.36, 1)",
                       objectFit: "cover",
                     }}
                     aria-hidden="true"
@@ -667,10 +722,12 @@ function BlockCardComponent({
                 onLoad={handleImageLoad}
                 onError={handleImageError}
                 style={{
-                  opacity: isLoaded ? 1 : 0,
+                  opacity: isLoaded ? 1 : 0.9,
+                  filter: isSharp ? "blur(0px)" : "blur(16px)",
+                  transform: isSharp ? "scale(1)" : "scale(1.03)",
                   transition: wasPreviouslyLoaded
                     ? "none"
-                    : "opacity 0.3s ease-out",
+                    : "opacity 240ms ease-out, filter 320ms cubic-bezier(0.22, 1, 0.36, 1), transform 320ms cubic-bezier(0.22, 1, 0.36, 1)",
                   objectFit: "cover",
                 }}
                 aria-hidden="true"

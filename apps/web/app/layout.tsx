@@ -4,6 +4,8 @@ import localFont from "next/font/local";
 import "./globals.css";
 import { Navigation } from "@/components/Navigation";
 import { LayoutSettingsProvider } from "@/components/LayoutSettingsContext";
+import { ThemeProvider } from "@/components/ThemeProvider";
+import { FeedSortProvider } from "@/components/FeedSortContext";
 
 const inter = localFont({
   src: [
@@ -74,15 +76,24 @@ export default function RootLayout({
   modal: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} dark`}>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background`}
       >
-        <LayoutSettingsProvider>
-          <Navigation />
-          {children}
-          {modal}
-        </LayoutSettingsProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          <LayoutSettingsProvider>
+            <FeedSortProvider>
+              <Navigation />
+              {children}
+              {modal}
+            </FeedSortProvider>
+          </LayoutSettingsProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

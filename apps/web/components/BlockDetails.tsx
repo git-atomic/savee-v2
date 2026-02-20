@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useMemo, useCallback } from "react";
+import { useEffect, useRef, useMemo, useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { X, ExternalLink, Search, ArrowLeft } from "lucide-react";
 import type { Block } from "@/types/block";
-import { getBlockMediaUrl, getBlockVideoUrl } from "@/lib/api";
+import {
+  getBlockMediaUrl,
+  getBlockVideoUrl,
+  getRemoteMediaProxyUrl,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { hexToRgb, getTextColor } from "@/lib/color-utils";
 import {
@@ -23,8 +27,11 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const isVideo = block.media_type === "video" || !!block.video_url;
-  const mediaUrl = getBlockMediaUrl(block);
+  const [mediaUrl, setMediaUrl] = useState(() =>
+    getBlockMediaUrl(block, { preferProxy: false })
+  );
   const videoUrl = getBlockVideoUrl(block);
+  const [triedProxyFallback, setTriedProxyFallback] = useState(false);
 
   const navigateTo = useCallback(
     (href: string) => {
@@ -101,17 +108,38 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   const apiSourceUrl = useMemo(() => {
     if (!block.links || block.links.length === 0) return null;
 
-    // Look for API endpoint link matching /api/items/.../source pattern
-    for (const link of block.links) {
-      const url = link && typeof link === "object" && "url" in link ? link.url : "";
+    const normalizedLinks = block.links
+      .map((link) => {
+        if (!link || typeof link !== "object" || !("url" in link)) return null;
+        return {
+          url: String(link.url || "").trim(),
+          title: String(("title" in link ? link.title : "") || "").trim(),
+        };
+      })
+      .filter((link): link is { url: string; title: string } => Boolean(link?.url));
 
-      if (url && /\/api\/items\/[^/]+\/source\/?$/i.test(url)) {
-        return url;
-      }
+    if (normalizedLinks.length === 0) {
+      return null;
     }
 
-    return null;
-  }, [block.links]);
+    const explicitSource = normalizedLinks.find((link) =>
+      /source/i.test(link.title)
+    );
+    if (explicitSource) {
+      return explicitSource.url;
+    }
+
+    const sourcePattern = normalizedLinks.find((link) =>
+      /\/source\/?$/i.test(link.url) ||
+      /\/api\/items\/[^/]+\/source\/?$/i.test(link.url)
+    );
+    if (sourcePattern) {
+      return sourcePattern.url;
+    }
+
+    const nonPrimaryLink = normalizedLinks.find((link) => link.url !== block.url);
+    return nonPrimaryLink?.url ?? null;
+  }, [block.links, block.url]);
 
   // Helper to get user avatar URL from partial user data
   const getUserAvatarUrlFromPartial = (
@@ -140,15 +168,34 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
     }
   }, [isModal]);
 
+  useEffect(() => {
+    setMediaUrl(getBlockMediaUrl(block, { preferProxy: false }));
+    setTriedProxyFallback(false);
+  }, [block.id, block.image_url, block.thumbnail_url, block.r2_key, block.video_url]);
+
+  const handleImageError = useCallback(() => {
+    if (!triedProxyFallback && mediaUrl && /^https?:\/\//i.test(mediaUrl)) {
+      setTriedProxyFallback(true);
+      setMediaUrl(getRemoteMediaProxyUrl(mediaUrl));
+      return;
+    }
+    const fallback = block.r2_key
+      ? `/api/media?key=${encodeURIComponent(block.r2_key)}`
+      : "";
+    if (fallback && fallback !== mediaUrl) {
+      setMediaUrl(fallback);
+    }
+  }, [triedProxyFallback, mediaUrl, block.r2_key]);
+
   return (
     <div
       className={cn(
         "relative flex w-full bg-background overflow-hidden",
-        isModal ? "h-full" : "min-h-screen"
+        isModal ? "h-full" : "h-[100dvh]"
       )}
     >
       {/* Main Content Area */}
-      <div className="relative flex-1 flex flex-col items-center justify-center p-4 md:p-8 lg:p-12 min-h-0 bg-[#0a0a0a]">
+      <div className="relative flex-1 flex flex-col items-center justify-center p-2 md:p-4 lg:p-6 min-h-0 bg-[#0a0a0a]">
         {/* Top Left Controls - Back Button and Avatar Stack */}
         <div className="absolute top-6 left-6 z-50 flex items-center gap-2">
           {/* Back Button */}
@@ -240,30 +287,32 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
         </div>
 
         {/* Media Container */}
-        <div className="relative w-full h-full flex items-center justify-center max-w-5xl">
+        <div className="relative w-full h-full max-h-full flex items-center justify-center max-w-6xl">
           {isVideo ? (
             <video
               ref={videoRef}
               src={videoUrl || ""}
+              poster={mediaUrl || undefined}
               autoPlay
               loop
               muted
               controls
               playsInline
-              className="max-h-full max-w-full object-contain rounded-sm"
+              className="h-full w-full object-contain rounded-sm"
             />
           ) : (
             <img
               src={mediaUrl}
               alt={block.title || "Block content"}
-              className="max-h-full max-w-full object-contain rounded-sm"
+              className="h-full w-full object-contain rounded-sm"
+              onError={handleImageError}
             />
           )}
         </div>
       </div>
 
       {/* Sidebar - Info Panel */}
-      <aside className="relative w-[450px] border-l border-white/5 bg-background p-10 flex-col gap-10 overflow-y-auto hidden lg:flex">
+      <aside className="relative h-full max-h-full w-[420px] border-l border-white/5 bg-background p-8 flex-col gap-8 overflow-y-auto hidden lg:flex">
         {/* Close Button - Top Right of Sidebar */}
         <button
           type="button"
@@ -282,7 +331,7 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
           </h1>
 
           {/* Source Info - Savee Link and API Source */}
-          <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex flex-col items-start gap-2">
             {saveeDomain && (
               <a
                 href={block.url}
@@ -323,7 +372,7 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
                     key={hex}
                     type="button"
                     onClick={() => handleColorClick(hex)}
-                    className="group flex h-10 w-10 min-w-[40px] max-w-[130px] cursor-pointer items-center justify-center overflow-hidden whitespace-nowrap rounded-[20px] border transition-all duration-300 delay-100 hover:w-auto hover:px-3 hover:delay-0 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 focus:ring-offset-gray-950"
+                    className="group flex h-10 w-10 hover:w-[126px] min-w-[40px] cursor-pointer items-center justify-center overflow-hidden whitespace-nowrap rounded-[20px] border transition-[width,transform,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 focus:ring-offset-gray-950"
                     style={{
                       backgroundColor: hex,
                       borderColor,
@@ -333,11 +382,11 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
                   >
                     <Search
                       size={12}
-                      className="mr-2 h-3 w-3 opacity-0 transition-opacity duration-300 group-hover:opacity-85 shrink-0"
+                      className="mr-2 h-3 w-3 opacity-0 -translate-x-1 transition-[opacity,transform] duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:opacity-85 group-hover:translate-x-0 shrink-0"
                       style={{ color: readableIcon }}
                     />
                     <span
-                      className="truncate text-[14px] font-medium opacity-0 transition-opacity duration-300 group-hover:opacity-90"
+                      className="truncate text-[14px] font-medium opacity-0 -translate-x-1 transition-[opacity,transform] duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:opacity-90 group-hover:translate-x-0"
                       style={{ color: readableText }}
                     >
                       {hex}

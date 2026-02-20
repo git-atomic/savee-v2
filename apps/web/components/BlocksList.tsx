@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { MasonryGrid } from "./MasonryGrid";
 import { MasonrySkeleton } from "./MasonrySkeleton";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { fetchBlocks } from "@/lib/api";
 import type { Block } from "@/types/block";
 import { useMasonryColumns } from "@/hooks/use-masonry-columns";
+import { useFeedSort } from "./FeedSortContext";
+import { sortBlocksByMode } from "@/lib/block-sort";
 import {
   dedupeBlocksByStableKey,
   mergeUniqueBlocks,
@@ -15,6 +17,14 @@ import {
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
 
+interface FeedCacheEntry {
+  blocks: Block[];
+  cursor: string | null;
+  hasMore: boolean;
+}
+
+const feedCache = new Map<string, FeedCacheEntry>();
+
 interface BlocksListProps {
   origin?: string | null;
 }
@@ -22,10 +32,12 @@ interface BlocksListProps {
 export function BlocksList(
   { origin }: BlocksListProps = {} as BlocksListProps
 ) {
-  const [blocks, setBlocks] = useState<Block[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
-  const [isLoading, setIsLoading] = useState(true);
+  const cacheKey = origin || "home";
+  const cached = feedCache.get(cacheKey);
+  const [blocks, setBlocks] = useState<Block[]>(() => cached?.blocks ?? []);
+  const [cursor, setCursor] = useState<string | null>(() => cached?.cursor ?? null);
+  const [hasMore, setHasMore] = useState(() => cached?.hasMore ?? true);
+  const [isLoading, setIsLoading] = useState(() => !cached);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -34,10 +46,14 @@ export function BlocksList(
   const isLoadingRef = useRef(false); // Guard against concurrent loads
   const lastRequestedCursorRef = useRef<string | null>(undefined as any); // Track cursors being loaded
   
-  // Track mounted state to prevent SSR/hydration issues
-  const isMountedRef = useRef(false);
+  const hasCachedStateRef = useRef(Boolean(cached));
 
   const columns = useMasonryColumns();
+  const { sortBy } = useFeedSort();
+  const sortedBlocks = useMemo(
+    () => sortBlocksByMode(blocks, sortBy),
+    [blocks, sortBy]
+  );
 
   const loadBlocks = useCallback(
     async (nextCursor?: string | null, signal?: AbortSignal, attempt = 0) => {
@@ -69,14 +85,23 @@ export function BlocksList(
           return;
         }
 
-        if (nextCursor) {
-          setBlocks((prev) => mergeUniqueBlocks(prev, response.blocks ?? []));
-        } else {
-          setBlocks(dedupeBlocksByStableKey(response.blocks ?? []));
-        }
+        let nextBlocks: Block[] = [];
+        setBlocks((prev) => {
+          nextBlocks = nextCursor
+            ? mergeUniqueBlocks(prev, response.blocks ?? [])
+            : dedupeBlocksByStableKey(response.blocks ?? []);
+          return nextBlocks;
+        });
 
-        setCursor(response.nextCursor || null);
-        setHasMore(Boolean(response.nextCursor));
+        const nextCursorValue = response.nextCursor || null;
+        const nextHasMore = Boolean(response.nextCursor);
+        setCursor(nextCursorValue);
+        setHasMore(nextHasMore);
+        feedCache.set(cacheKey, {
+          blocks: nextBlocks,
+          cursor: nextCursorValue,
+          hasMore: nextHasMore,
+        });
         setRetryCount(0); // Reset retry count on success
       } catch (err) {
         if (
@@ -118,22 +143,21 @@ export function BlocksList(
         }
       }
     },
-    [origin] // Removed isLoadingMore to make this function stable
+    [origin, cacheKey] // Removed isLoadingMore to make this function stable
   );
 
   useEffect(() => {
-    // Mark as mounted
-    isMountedRef.current = true;
-    
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    // Reset cursor tracking when origin changes
     lastRequestedCursorRef.current = undefined as any;
-    loadBlocks(null, controller.signal);
+    if (!hasCachedStateRef.current) {
+      loadBlocks(null, controller.signal);
+    } else {
+      setIsLoading(false);
+    }
 
     return () => {
-      isMountedRef.current = false;
       controller.abort();
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
@@ -153,10 +177,12 @@ export function BlocksList(
   const handleRetry = useCallback(() => {
     setError(null);
     setRetryCount(0);
+    hasCachedStateRef.current = false;
+    feedCache.delete(cacheKey);
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    loadBlocks(cursor || null, controller.signal);
-  }, [cursor, loadBlocks]);
+    loadBlocks(null, controller.signal);
+  }, [loadBlocks, cacheKey]);
 
   if (error && blocks.length === 0 && !isLoading) {
     return (
@@ -200,9 +226,9 @@ export function BlocksList(
             count={columns * 6}
             blocks={undefined}
           />
-        ) : blocks.length > 0 ? (
+        ) : sortedBlocks.length > 0 ? (
           <MasonryGrid
-            blocks={blocks}
+            blocks={sortedBlocks}
             onLoadMore={handleLoadMore}
             hasMore={hasMore}
             isLoadingMore={isLoadingMore}

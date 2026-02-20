@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { MasonryGrid } from "./MasonryGrid";
 import { MasonrySkeleton } from "./MasonrySkeleton";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -12,6 +12,8 @@ import {
 import type { Block } from "@/types/block";
 import type { User } from "@/lib/api";
 import { useMasonryColumns } from "@/hooks/use-masonry-columns";
+import { useFeedSort } from "./FeedSortContext";
+import { sortBlocksByMode } from "@/lib/block-sort";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -21,6 +23,15 @@ import {
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
+
+interface UserBlocksCacheEntry {
+  blocks: Block[];
+  cursor: string | null;
+  hasMore: boolean;
+}
+
+const userProfileCache = new Map<string, User>();
+const userBlocksCache = new Map<string, UserBlocksCacheEntry>();
 
 function safeAbort(controller: AbortController | null): void {
   if (!controller || controller.signal.aborted) return;
@@ -36,12 +47,13 @@ interface UserProfileProps {
 }
 
 export function UserProfile({ username }: UserProfileProps) {
+  const cachedBlocks = userBlocksCache.get(username);
   const [user, setUser] = useState<User | null>(null);
-  const [blocks, setBlocks] = useState<Block[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [hasMore, setHasMore] = useState(true);
+  const [blocks, setBlocks] = useState<Block[]>(() => cachedBlocks?.blocks ?? []);
+  const [cursor, setCursor] = useState<string | null>(() => cachedBlocks?.cursor ?? null);
+  const [hasMore, setHasMore] = useState(() => cachedBlocks?.hasMore ?? true);
   const [isLoadingUser, setIsLoadingUser] = useState(true);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => !cachedBlocks);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -52,8 +64,20 @@ export function UserProfile({ username }: UserProfileProps) {
   const lastRequestedCursorRef = useRef<string | null | undefined>(undefined);
 
   const columns = useMasonryColumns();
+  const { sortBy } = useFeedSort();
+  const sortedBlocks = useMemo(
+    () => sortBlocksByMode(blocks, sortBy),
+    [blocks, sortBy]
+  );
 
   useEffect(() => {
+    const cachedUser = userProfileCache.get(username);
+    if (cachedUser) {
+      setUser(cachedUser);
+      setIsLoadingUser(false);
+      return;
+    }
+
     const controller = new AbortController();
     userAbortControllerRef.current = controller;
     setIsLoadingUser(true);
@@ -65,6 +89,7 @@ export function UserProfile({ username }: UserProfileProps) {
         if (controller.signal.aborted) return;
 
         if (response.success && response.user) {
+          userProfileCache.set(username, response.user);
           setUser(response.user);
         } else {
           setUser(null);
@@ -133,14 +158,23 @@ export function UserProfile({ username }: UserProfileProps) {
 
         if (signal?.aborted) return;
 
-        if (nextCursor) {
-          setBlocks((prev) => mergeUniqueBlocks(prev, response.blocks ?? []));
-        } else {
-          setBlocks(dedupeBlocksByStableKey(response.blocks ?? []));
-        }
+        let nextBlocks: Block[] = [];
+        setBlocks((prev) => {
+          nextBlocks = nextCursor
+            ? mergeUniqueBlocks(prev, response.blocks ?? [])
+            : dedupeBlocksByStableKey(response.blocks ?? []);
+          return nextBlocks;
+        });
 
-        setCursor(response.nextCursor || null);
-        setHasMore(Boolean(response.nextCursor));
+        const nextCursorValue = response.nextCursor || null;
+        const nextHasMore = Boolean(response.nextCursor);
+        setCursor(nextCursorValue);
+        setHasMore(nextHasMore);
+        userBlocksCache.set(username, {
+          blocks: nextBlocks,
+          cursor: nextCursorValue,
+          hasMore: nextHasMore,
+        });
         setRetryCount(0);
       } catch (err) {
         if (
@@ -184,6 +218,15 @@ export function UserProfile({ username }: UserProfileProps) {
 
   useEffect(() => {
     if (!user) return;
+
+    const cached = userBlocksCache.get(username);
+    if (cached) {
+      setBlocks(cached.blocks);
+      setCursor(cached.cursor);
+      setHasMore(cached.hasMore);
+      setIsLoading(false);
+      return;
+    }
 
     const controller = new AbortController();
     blocksAbortControllerRef.current = controller;
@@ -395,9 +438,9 @@ export function UserProfile({ username }: UserProfileProps) {
               count={columns * 6}
               blocks={undefined}
             />
-          ) : blocks.length > 0 ? (
+          ) : sortedBlocks.length > 0 ? (
             <MasonryGrid
-              blocks={blocks}
+              blocks={sortedBlocks}
               onLoadMore={handleLoadMore}
               hasMore={hasMore}
               isLoadingMore={isLoadingMore}
@@ -413,4 +456,3 @@ export function UserProfile({ username }: UserProfileProps) {
     </ErrorBoundary>
   );
 }
-

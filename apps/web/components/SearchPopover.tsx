@@ -265,7 +265,7 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
           align="center"
           side="bottom"
           sideOffset={8}
-          className="w-[600px] max-w-[calc(100vw-2rem)] p-0"
+          className="w-[600px] max-w-[calc(100vw-2rem)] p-0 rounded-2xl border-border/70 shadow-2xl"
           style={{ zIndex: 101 }}
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
@@ -287,7 +287,7 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
                       }}
                       role="button"
                       tabIndex={0}
-                      className="group relative flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted hover:bg-muted/80 transition-colors text-sm"
+                      className="group relative flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/80 hover:bg-muted transition-[transform,background-color] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-0.5 text-sm"
                       title={`Search for ${recent}`}
                     >
                       <span>{recent}</span>
@@ -341,7 +341,7 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
                                 query;
                               handleSearch(searchText);
                             }}
-                            className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors text-left group"
+                            className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-[background-color,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] text-left group hover:-translate-y-0.5"
                           >
                             {mediaUrl ? (
                               <div className="relative h-12 w-12 rounded-lg overflow-hidden bg-muted shrink-0">

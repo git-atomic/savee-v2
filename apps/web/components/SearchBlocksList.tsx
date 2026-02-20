@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { MasonryGrid } from "./MasonryGrid";
 import { MasonrySkeleton } from "./MasonrySkeleton";
@@ -10,6 +10,8 @@ import type { Block } from "@/types/block";
 import { useMasonryColumns } from "@/hooks/use-masonry-columns";
 import { detectColor, hexToRgb, getTextColor } from "@/lib/color-utils";
 import { Search } from "lucide-react";
+import { useFeedSort } from "./FeedSortContext";
+import { sortBlocksByMode } from "@/lib/block-sort";
 import {
   dedupeBlocksByStableKey,
   mergeUniqueBlocks,
@@ -17,6 +19,14 @@ import {
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
+
+interface SearchCacheEntry {
+  blocks: Block[];
+  cursor: string | null;
+  hasMore: boolean;
+}
+
+const searchCache = new Map<string, SearchCacheEntry>();
 
 function safeAbort(controller: AbortController | null): void {
   if (!controller || controller.signal.aborted) return;
@@ -45,6 +55,11 @@ export function SearchBlocksList() {
   const lastRequestedCursorRef = useRef<string | null | undefined>(undefined);
 
   const columns = useMasonryColumns();
+  const { sortBy } = useFeedSort();
+  const sortedBlocks = useMemo(
+    () => sortBlocksByMode(blocks, sortBy),
+    [blocks, sortBy]
+  );
 
   const loadBlocks = useCallback(
     async (
@@ -104,14 +119,23 @@ export function SearchBlocksList() {
           return;
         }
 
-        if (nextCursor) {
-          setBlocks((prev) => mergeUniqueBlocks(prev, response.blocks ?? []));
-        } else {
-          setBlocks(dedupeBlocksByStableKey(response.blocks ?? []));
-        }
+        let nextBlocks: Block[] = [];
+        setBlocks((prev) => {
+          nextBlocks = nextCursor
+            ? mergeUniqueBlocks(prev, response.blocks ?? [])
+            : dedupeBlocksByStableKey(response.blocks ?? []);
+          return nextBlocks;
+        });
 
-        setCursor(response.nextCursor || null);
-        setHasMore(Boolean(response.nextCursor));
+        const nextCursorValue = response.nextCursor || null;
+        const nextHasMore = Boolean(response.nextCursor);
+        setCursor(nextCursorValue);
+        setHasMore(nextHasMore);
+        searchCache.set(normalizedQuery.toLowerCase(), {
+          blocks: nextBlocks,
+          cursor: nextCursorValue,
+          hasMore: nextHasMore,
+        });
         setRetryCount(0);
       } catch (err) {
         if (
@@ -177,8 +201,20 @@ export function SearchBlocksList() {
     }
 
     const controller = new AbortController();
+    const normalizedQuery = query.trim();
+    const cached = searchCache.get(normalizedQuery.toLowerCase());
+    if (cached) {
+      setBlocks(cached.blocks);
+      setCursor(cached.cursor);
+      setHasMore(cached.hasMore);
+      setError(null);
+      setIsLoading(false);
+      setIsLoadingMore(false);
+      return;
+    }
+
     abortControllerRef.current = controller;
-    loadBlocks(query, null, controller.signal);
+    loadBlocks(normalizedQuery, null, controller.signal);
 
     return () => {
       if (retryTimeoutRef.current) {
@@ -285,7 +321,7 @@ export function SearchBlocksList() {
               blocks={undefined}
             />
           </>
-        ) : blocks.length > 0 ? (
+        ) : sortedBlocks.length > 0 ? (
           <>
             <div className="mb-8">
               {(() => {
@@ -312,8 +348,8 @@ export function SearchBlocksList() {
                             {colorHex}
                           </h1>
                           <p className="text-muted-foreground text-sm mt-1">
-                            {blocks.length}{" "}
-                            {blocks.length === 1 ? "result" : "results"}
+                            {sortedBlocks.length}{" "}
+                            {sortedBlocks.length === 1 ? "result" : "results"}
                           </p>
                         </div>
                       </div>
@@ -326,15 +362,15 @@ export function SearchBlocksList() {
                       Search results for &quot;{query}&quot;
                     </h1>
                     <p className="text-muted-foreground text-sm">
-                      {blocks.length}{" "}
-                      {blocks.length === 1 ? "result" : "results"}
+                      {sortedBlocks.length}{" "}
+                      {sortedBlocks.length === 1 ? "result" : "results"}
                     </p>
                   </>
                 );
               })()}
             </div>
             <MasonryGrid
-              blocks={blocks}
+              blocks={sortedBlocks}
               onLoadMore={handleLoadMore}
               hasMore={hasMore}
               isLoadingMore={isLoadingMore}
@@ -397,4 +433,3 @@ export function SearchBlocksList() {
     </ErrorBoundary>
   );
 }
-

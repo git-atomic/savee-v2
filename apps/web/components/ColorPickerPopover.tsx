@@ -352,7 +352,7 @@ export function ColorPickerPopover({
                       key={index}
                       onClick={() => handleColorSelect(hex)}
                       className={cn(
-                        "duration-over-long border-separator group flex h-10 w-10 min-w-0 max-w-[130px] cursor-pointer items-center justify-center overflow-hidden whitespace-nowrap rounded-[20px] border transition-all delay-100 hover:flex-auto hover:delay-0",
+                        "border-separator group flex h-10 w-10 hover:w-[118px] min-w-0 cursor-pointer items-center justify-center overflow-hidden whitespace-nowrap rounded-[20px] border transition-[width,transform,background-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]",
                         "focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 focus:ring-offset-gray-950"
                       )}
                       style={{
@@ -371,7 +371,7 @@ export function ColorPickerPopover({
                         viewBox="0 0 20 20"
                         width="20"
                         className={cn(
-                          "duration-over-long mr-2 h-3 w-3 opacity-0 transition-opacity group-hover:opacity-80",
+                          "mr-2 h-3 w-3 opacity-0 -translate-x-1 transition-[opacity,transform] duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:opacity-80 group-hover:translate-x-0",
                           textColor
                         )}
                       >
@@ -390,7 +390,7 @@ export function ColorPickerPopover({
                       </svg>
                       <span
                         className={cn(
-                          "duration-over-long truncate text-[14px] font-medium opacity-0 transition-opacity group-hover:opacity-80",
+                          "truncate text-[14px] font-medium opacity-0 -translate-x-1 transition-[opacity,transform] duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:opacity-80 group-hover:translate-x-0",
                           textColor
                         )}
                       >

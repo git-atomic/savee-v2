@@ -10,6 +10,34 @@ import { useIntersectionObserverPool } from "@/hooks/use-intersection-observer-p
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
 
+function mergeUniqueUsers(prev: User[], next: User[]): User[] {
+  const deduped = new Map<string, User>();
+
+  for (const user of prev) {
+    deduped.set(`id:${user.id}`, user);
+    deduped.set(`username:${user.username.toLowerCase()}`, user);
+  }
+
+  for (const user of next) {
+    const byId = deduped.get(`id:${user.id}`);
+    const byUsername = deduped.get(`username:${user.username.toLowerCase()}`);
+    if (byId || byUsername) {
+      continue;
+    }
+    deduped.set(`id:${user.id}`, user);
+    deduped.set(`username:${user.username.toLowerCase()}`, user);
+  }
+
+  const uniqueUsers: User[] = [];
+  const seenIds = new Set<number>();
+  for (const user of deduped.values()) {
+    if (seenIds.has(user.id)) continue;
+    seenIds.add(user.id);
+    uniqueUsers.push(user);
+  }
+  return uniqueUsers;
+}
+
 export function UsersList() {
   const [users, setUsers] = useState<User[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -57,9 +85,9 @@ export function UsersList() {
         if (signal?.aborted) return;
 
         if (nextCursor) {
-          setUsers((prev) => [...prev, ...response.users]);
+          setUsers((prev) => mergeUniqueUsers(prev, response.users ?? []));
         } else {
-          setUsers(response.users);
+          setUsers(mergeUniqueUsers([], response.users ?? []));
           setTotalCount(response.total ?? null);
         }
 
@@ -282,4 +310,3 @@ export function UsersList() {
     </ErrorBoundary>
   );
 }
-

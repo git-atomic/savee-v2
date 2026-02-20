@@ -12,12 +12,15 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { useLayoutSettings } from "./LayoutSettingsContext";
+import { useFeedSort } from "./FeedSortContext";
 import { Settings } from "lucide-react";
 import { SearchPopover, type SearchPopoverRef } from "./SearchPopover";
+import { ThemeToggle } from "./ThemeToggle";
 
 export function Navigation() {
   const pathname = usePathname();
   const { columns, gap, setColumns, setGap } = useLayoutSettings();
+  const { sortBy, setSortBy } = useFeedSort();
   
   // Always start with true to match server render, then update after hydration
   const [isVisible, setIsVisible] = useState(true);
@@ -171,59 +174,91 @@ export function Navigation() {
               <SearchPopover ref={searchPopoverRef} />
             </div>
 
-            {/* Settings button */}
-            <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0"
-                  aria-label="Layout settings"
+            <div className="flex items-center gap-1.5">
+              <ThemeToggle />
+              {/* Settings button */}
+              <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0"
+                    aria-label="Layout settings"
+                  >
+                    <Settings className="size-4" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="end"
+                  side="bottom"
+                  sideOffset={8}
+                  className="w-80"
+                  style={{ zIndex: 101 }}
                 >
-                  <Settings className="size-4" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="end"
-                side="bottom"
-                sideOffset={8}
-                className="w-80"
-                style={{ zIndex: 101 }}
-              >
-                <div className="space-y-6">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-sm font-medium">Columns</label>
-                      <span className="text-sm text-muted-foreground">
-                        {columns}
-                      </span>
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Sort</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSortBy("recent")}
+                          className={cn(
+                            "rounded-md border px-3 py-2 text-sm transition-colors",
+                            sortBy === "recent"
+                              ? "border-foreground/30 bg-accent text-foreground"
+                              : "border-border bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                          )}
+                        >
+                          Recent
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSortBy("oldest")}
+                          className={cn(
+                            "rounded-md border px-3 py-2 text-sm transition-colors",
+                            sortBy === "oldest"
+                              ? "border-foreground/30 bg-accent text-foreground"
+                              : "border-border bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                          )}
+                        >
+                          Oldest
+                        </button>
+                      </div>
                     </div>
-                    <Slider
-                      value={[columns]}
-                      onValueChange={(value) => setColumns(value[0])}
-                      min={1}
-                      max={10}
-                      step={1}
-                    />
-                  </div>
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <label className="text-sm font-medium">Padding</label>
-                      <span className="text-sm text-muted-foreground">
-                        {gap}px
-                      </span>
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-sm font-medium">Columns</label>
+                        <span className="text-sm text-muted-foreground">
+                          {columns}
+                        </span>
+                      </div>
+                      <Slider
+                        value={[columns]}
+                        onValueChange={(value) => setColumns(value[0])}
+                        min={1}
+                        max={10}
+                        step={1}
+                      />
                     </div>
-                    <Slider
-                      value={[gap]}
-                      onValueChange={(value) => setGap(value[0])}
-                      min={0}
-                      max={64}
-                      step={4}
-                    />
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-sm font-medium">Padding</label>
+                        <span className="text-sm text-muted-foreground">
+                          {gap}px
+                        </span>
+                      </div>
+                      <Slider
+                        value={[gap]}
+                        onValueChange={(value) => setGap(value[0])}
+                        min={0}
+                        max={64}
+                        step={4}
+                      />
+                    </div>
                   </div>
-                </div>
-              </PopoverContent>
-            </Popover>
+                </PopoverContent>
+              </Popover>
+            </div>
           </div>
         </div>
       </nav>
