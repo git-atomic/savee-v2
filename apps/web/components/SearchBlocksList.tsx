@@ -18,15 +18,12 @@ import {
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
 
-// Helper function to safely abort a controller without throwing errors
 function safeAbort(controller: AbortController | null): void {
-  if (!controller) return;
+  if (!controller || controller.signal.aborted) return;
   try {
-    if (!controller.signal.aborted) {
-      controller.abort();
-    }
+    controller.abort();
   } catch {
-    // Silently ignore any errors during abort - they're expected during cleanup
+    // Ignore abort errors during teardown.
   }
 }
 
@@ -43,7 +40,9 @@ export function SearchBlocksList() {
   const [retryCount, setRetryCount] = useState(0);
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isLoadingRef = useRef(false); // Guard against concurrent loads
+  const isLoadingRef = useRef(false);
+  const activeQueryRef = useRef("");
+  const lastRequestedCursorRef = useRef<string | null | undefined>(undefined);
 
   const columns = useMasonryColumns();
 
@@ -54,47 +53,56 @@ export function SearchBlocksList() {
       signal?: AbortSignal,
       attempt = 0
     ) => {
-      if (!searchQuery.trim()) {
+      const normalizedQuery = searchQuery.trim();
+
+      if (!normalizedQuery) {
         if (!signal?.aborted) {
           setIsLoading(false);
+          setIsLoadingMore(false);
           setBlocks([]);
+          setCursor(null);
           setHasMore(false);
         }
         return;
       }
 
-      // Prevent concurrent loads (race condition guard)
-      if (isLoadingRef.current && !nextCursor) {
-        return; // Initial load already in progress
+      const cursorKey = `${normalizedQuery}::${nextCursor ?? "__root__"}`;
+      if (isLoadingRef.current) {
+        return;
       }
-      
+      if (
+        lastRequestedCursorRef.current !== undefined &&
+        lastRequestedCursorRef.current === cursorKey
+      ) {
+        return;
+      }
+
       try {
         isLoadingRef.current = true;
-        
-        if (!signal?.aborted) {
-          if (!nextCursor) {
-            setIsLoading(true);
-            setBlocks([]);
-          } else {
-            // Prevent concurrent pagination loads
-            if (isLoadingMore) {
-              isLoadingRef.current = false;
-              return;
-            }
-            setIsLoadingMore(true);
-          }
-          setError(null);
+        lastRequestedCursorRef.current = cursorKey;
+        activeQueryRef.current = normalizedQuery;
+
+        if (!nextCursor) {
+          setIsLoading(true);
+          setBlocks([]);
+        } else {
+          setIsLoadingMore(true);
         }
+        setError(null);
 
         const response = await searchBlocks(
-          searchQuery,
+          normalizedQuery,
           nextCursor || null,
           36,
           signal
         );
 
-        // Check if aborted before updating state
-        if (signal?.aborted) return;
+        if (
+          signal?.aborted ||
+          activeQueryRef.current !== normalizedQuery
+        ) {
+          return;
+        }
 
         if (nextCursor) {
           setBlocks((prev) => mergeUniqueBlocks(prev, response.blocks ?? []));
@@ -104,35 +112,27 @@ export function SearchBlocksList() {
 
         setCursor(response.nextCursor || null);
         setHasMore(Boolean(response.nextCursor));
-        setRetryCount(0); // Reset retry count on success
+        setRetryCount(0);
       } catch (err) {
-        // Silently ignore abort errors - they're expected during cleanup
         if (
           signal?.aborted ||
-          (err instanceof Error &&
-            (err.name === "AbortError" ||
-              err.message === "signal is aborted without reason" ||
-              err.message.includes("aborted")))
+          (err instanceof Error && err.name === "AbortError")
         ) {
           return;
         }
 
-        // Don't update state if signal was aborted
-        if (signal?.aborted) return;
+        lastRequestedCursorRef.current = undefined;
 
         const errorMessage =
           err instanceof Error ? err.message : "Failed to search blocks";
 
-        // Retry logic for transient errors
-        if (attempt < MAX_RETRIES && !nextCursor && !signal?.aborted) {
-          const delay = RETRY_DELAY * Math.pow(2, attempt); // Exponential backoff
+        if (attempt < MAX_RETRIES && !nextCursor) {
+          const delay = RETRY_DELAY * Math.pow(2, attempt);
           setRetryCount(attempt + 1);
 
           retryTimeoutRef.current = setTimeout(() => {
-            // Don't retry if signal was aborted
-            if (!signal?.aborted) {
-              loadBlocks(searchQuery, nextCursor, signal, attempt + 1);
-            }
+            isLoadingRef.current = false;
+            loadBlocks(normalizedQuery, nextCursor, signal, attempt + 1);
           }, delay);
 
           return;
@@ -145,64 +145,85 @@ export function SearchBlocksList() {
         }
       } finally {
         isLoadingRef.current = false;
-        // Only update loading state if not aborted
         if (!signal?.aborted) {
           setIsLoading(false);
           setIsLoadingMore(false);
         }
       }
     },
-    [isLoadingMore]
+    []
   );
 
   useEffect(() => {
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+
+    safeAbort(abortControllerRef.current);
+    abortControllerRef.current = null;
+    lastRequestedCursorRef.current = undefined;
+    activeQueryRef.current = query.trim();
+
+    if (!query.trim()) {
+      setBlocks([]);
+      setCursor(null);
+      setHasMore(false);
+      setError(null);
+      setRetryCount(0);
+      setIsLoading(false);
+      setIsLoadingMore(false);
+      return;
+    }
+
     const controller = new AbortController();
     abortControllerRef.current = controller;
-
     loadBlocks(query, null, controller.signal);
 
     return () => {
-      // Clear retry timeout first
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;
       }
-      
-      // Abort the controller if it's still the current one
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
       }
-      
-      // Safely abort the controller
       safeAbort(controller);
     };
   }, [query, loadBlocks]);
 
   const handleLoadMore = useCallback(() => {
-    if (!isLoadingMore && !isLoading && hasMore && cursor && query) {
-      // Abort any existing request before starting a new one
-      if (abortControllerRef.current) {
-        safeAbort(abortControllerRef.current);
-        abortControllerRef.current = null;
-      }
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) return;
+
+    const cursorKey = `${normalizedQuery}::${cursor ?? "__root__"}`;
+    if (
+      !isLoadingRef.current &&
+      !isLoadingMore &&
+      !isLoading &&
+      hasMore &&
+      cursor &&
+      cursorKey !== lastRequestedCursorRef.current
+    ) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
-      loadBlocks(query, cursor, controller.signal);
+      loadBlocks(normalizedQuery, cursor, controller.signal);
     }
   }, [isLoadingMore, isLoading, hasMore, cursor, query, loadBlocks]);
 
   const handleRetry = useCallback(() => {
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) return;
+
     setError(null);
     setRetryCount(0);
-    // Abort any existing request before retrying
-    if (abortControllerRef.current) {
-      safeAbort(abortControllerRef.current);
-      abortControllerRef.current = null;
-    }
+    lastRequestedCursorRef.current = undefined;
+    safeAbort(abortControllerRef.current);
+
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    loadBlocks(query, cursor || null, controller.signal);
-  }, [cursor, query, loadBlocks]);
+    loadBlocks(normalizedQuery, null, controller.signal);
+  }, [query, loadBlocks]);
 
   if (!query.trim()) {
     return (
@@ -249,7 +270,6 @@ export function SearchBlocksList() {
           paddingBottom: "var(--page-margin)",
           paddingLeft: "var(--page-margin)",
           paddingRight: "var(--page-margin)",
-          // Prevent layout shifts during transitions
           containIntrinsicSize: "auto 2000px",
         }}
       >
@@ -377,3 +397,4 @@ export function SearchBlocksList() {
     </ErrorBoundary>
   );
 }
+

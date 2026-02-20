@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
 
 /**
  * Enterprise-grade shared Intersection Observer pool
@@ -8,7 +8,12 @@ import { useEffect, useRef, useCallback } from "react";
  */
 class IntersectionObserverPool {
   private observers = new Map<string, IntersectionObserver>();
-  private elementCallbacks = new Map<Element, Set<(entry: IntersectionObserverEntry) => void>>();
+  private observerElements = new Map<string, Set<Element>>();
+  private elementCallbacks = new Map<
+    Element,
+    Set<(entry: IntersectionObserverEntry) => void>
+  >();
+  private elementObserverKeys = new Map<Element, string>();
 
   private createObserver(options: IntersectionObserverInit): IntersectionObserver {
     return new IntersectionObserver(
@@ -26,8 +31,11 @@ class IntersectionObserverPool {
 
   private getObserverKey(options: IntersectionObserverInit): string {
     return JSON.stringify({
+      root: options.root ? "custom-root" : "viewport",
       rootMargin: options.rootMargin || "0px",
-      threshold: options.threshold || 0,
+      threshold: Array.isArray(options.threshold)
+        ? options.threshold.join(",")
+        : options.threshold || 0,
     });
   }
 
@@ -44,10 +52,29 @@ class IntersectionObserverPool {
       this.observers.set(key, observer);
     }
 
-    // Add callback for this element
+    if (!this.observerElements.has(key)) {
+      this.observerElements.set(key, new Set());
+    }
+
+    const observedElements = this.observerElements.get(key)!;
+    const existingKey = this.elementObserverKeys.get(element);
+    if (existingKey && existingKey !== key) {
+      const previousObserver = this.observers.get(existingKey);
+      const previousSet = this.observerElements.get(existingKey);
+      if (previousObserver && previousSet?.has(element)) {
+        previousObserver.unobserve(element);
+        previousSet.delete(element);
+      }
+    }
+
     if (!this.elementCallbacks.has(element)) {
       this.elementCallbacks.set(element, new Set());
+    }
+
+    if (!observedElements.has(element)) {
       observer.observe(element);
+      observedElements.add(element);
+      this.elementObserverKeys.set(element, key);
     }
     this.elementCallbacks.get(element)!.add(callback);
 
@@ -58,7 +85,22 @@ class IntersectionObserverPool {
         callbacks.delete(callback);
         if (callbacks.size === 0) {
           this.elementCallbacks.delete(element);
-          observer?.unobserve(element);
+          const observerKey = this.elementObserverKeys.get(element);
+          const boundObserver = observerKey
+            ? this.observers.get(observerKey)
+            : observer;
+          const boundElements = observerKey
+            ? this.observerElements.get(observerKey)
+            : this.observerElements.get(key);
+          boundObserver?.unobserve(element);
+          boundElements?.delete(element);
+          this.elementObserverKeys.delete(element);
+
+          if (observerKey && boundElements && boundElements.size === 0) {
+            boundObserver?.disconnect();
+            this.observers.delete(observerKey);
+            this.observerElements.delete(observerKey);
+          }
         }
       }
     };
@@ -67,7 +109,9 @@ class IntersectionObserverPool {
   disconnect() {
     this.observers.forEach((observer) => observer.disconnect());
     this.observers.clear();
+    this.observerElements.clear();
     this.elementCallbacks.clear();
+    this.elementObserverKeys.clear();
   }
 }
 
@@ -84,14 +128,32 @@ export function useIntersectionObserverPool(
   const elementRef = useRef<Element | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const callbackRef = useRef(callback);
+  const optionsRef = useRef<IntersectionObserverInit>(options);
+
+  const normalizedOptions = useMemo<IntersectionObserverInit>(
+    () => ({
+      root: options.root ?? null,
+      rootMargin: options.rootMargin ?? "0px",
+      threshold: options.threshold ?? 0,
+    }),
+    [options.root, options.rootMargin, options.threshold]
+  );
 
   // Keep callback ref updated
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
 
+  useEffect(() => {
+    optionsRef.current = normalizedOptions;
+  }, [normalizedOptions]);
+
   const setElement = useCallback(
     (element: Element | null) => {
+      if (elementRef.current === element) {
+        return;
+      }
+
       // Cleanup previous
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
@@ -106,11 +168,11 @@ export function useIntersectionObserverPool(
           (entry) => {
             callbackRef.current(entry.isIntersecting);
           },
-          options
+          optionsRef.current
         );
       }
     },
-    [options]
+    []
   );
 
   useEffect(() => {

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { X, ExternalLink, Search, ArrowLeft } from "lucide-react";
 import type { Block } from "@/types/block";
 import { getBlockMediaUrl, getBlockVideoUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { hexToRgb, getTextColor } from "@/lib/color-utils";
 import {
   Popover,
   PopoverContent,
@@ -25,13 +26,67 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   const mediaUrl = getBlockMediaUrl(block);
   const videoUrl = getBlockVideoUrl(block);
 
-  const handleClose = () => {
+  const navigateTo = useCallback(
+    (href: string) => {
+      if (isModal) {
+        router.replace(href);
+        return;
+      }
+      router.push(href);
+    },
+    [isModal, router]
+  );
+
+  const handleClose = useCallback(() => {
     if (isModal) {
-      router.back();
-    } else {
-      router.push("/");
+      if (window.history.length > 1) {
+        router.back();
+        return;
+      }
+      router.replace("/");
+      return;
     }
-  };
+    router.push("/");
+  }, [isModal, router]);
+
+  const handleTagClick = useCallback(
+    (tag: string) => {
+      navigateTo(`/search?q=${encodeURIComponent(tag)}`);
+    },
+    [navigateTo]
+  );
+
+  const handleColorClick = useCallback(
+    (hex: string) => {
+      navigateTo(`/search?q=${encodeURIComponent(hex)}`);
+    },
+    [navigateTo]
+  );
+
+  const handleUserClick = useCallback(
+    (username: string) => {
+      navigateTo(`/users/${username}`);
+    },
+    [navigateTo]
+  );
+
+  const getColorPillStyles = useCallback((hex: string) => {
+    const rgb = hexToRgb(hex);
+    const readableText =
+      rgb && getTextColor(rgb.r, rgb.g, rgb.b) === "black"
+        ? "rgba(0, 0, 0, 0.86)"
+        : "rgba(255, 255, 255, 0.94)";
+    const readableIcon =
+      rgb && getTextColor(rgb.r, rgb.g, rgb.b) === "black"
+        ? "rgba(0, 0, 0, 0.72)"
+        : "rgba(255, 255, 255, 0.86)";
+    const borderColor =
+      rgb && getTextColor(rgb.r, rgb.g, rgb.b) === "black"
+        ? "rgba(0, 0, 0, 0.18)"
+        : "rgba(255, 255, 255, 0.2)";
+
+    return { readableText, readableIcon, borderColor };
+  }, []);
 
   const saveeDomain = useMemo(() => {
     try {
@@ -45,31 +100,27 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   // Extract API source URL from links
   const apiSourceUrl = useMemo(() => {
     if (!block.links || block.links.length === 0) return null;
-    
+
     // Look for API endpoint link matching /api/items/.../source pattern
     for (const link of block.links) {
-      const url = (link && typeof link === 'object' && 'url' in link) ? link.url : "";
-      
-      // Check if it's an API source endpoint
+      const url = link && typeof link === "object" && "url" in link ? link.url : "";
+
       if (url && /\/api\/items\/[^/]+\/source\/?$/i.test(url)) {
         return url;
       }
     }
-    
+
     return null;
   }, [block.links]);
 
-
-  const handleTagClick = (tag: string) => {
-    router.push(`/search?q=${encodeURIComponent(tag)}`);
-  };
-
-  const handleColorClick = (hex: string) => {
-    router.push(`/search?q=${encodeURIComponent(hex)}`);
-  };
-
   // Helper to get user avatar URL from partial user data
-  const getUserAvatarUrlFromPartial = (user: { avatar_r2_key?: string | null; profile_image_url?: string | null; username: string }) => {
+  const getUserAvatarUrlFromPartial = (
+    user: {
+      avatar_r2_key?: string | null;
+      profile_image_url?: string | null;
+      username: string;
+    }
+  ) => {
     if (user.avatar_r2_key) {
       return `/api/media?key=${encodeURIComponent(user.avatar_r2_key)}`;
     }
@@ -78,7 +129,6 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
     }
     return `https://avatar.vercel.sh/${user.username}`;
   };
-
 
   // Prevent body scroll when modal is open
   useEffect(() => {
@@ -91,15 +141,19 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   }, [isModal]);
 
   return (
-    <div className={cn(
-      "relative flex h-full w-full bg-background overflow-hidden"
-    )}>
+    <div
+      className={cn(
+        "relative flex w-full bg-background overflow-hidden",
+        isModal ? "h-full" : "min-h-screen"
+      )}
+    >
       {/* Main Content Area */}
       <div className="relative flex-1 flex flex-col items-center justify-center p-4 md:p-8 lg:p-12 min-h-0 bg-[#0a0a0a]">
         {/* Top Left Controls - Back Button and Avatar Stack */}
         <div className="absolute top-6 left-6 z-50 flex items-center gap-2">
           {/* Back Button */}
           <button
+            type="button"
             onClick={handleClose}
             className="p-2 rounded-full bg-black/20 hover:bg-black/40 transition-colors text-white backdrop-blur-md"
             aria-label="Back"
@@ -111,26 +165,24 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
           {block.origin_map?.users && block.origin_map.users.length > 0 && (
             <Popover>
               <PopoverTrigger asChild>
-                <button
-                  className="flex items-center gap-2 group"
-                >
+                <button type="button" className="flex items-center gap-2 group">
                   <div className="flex -space-x-2">
                     {block.origin_map.users.slice(0, 5).map((user, i) => (
-                      <div 
-                        key={user.username} 
+                      <div
+                        key={user.username}
                         className="w-8 h-8 rounded-full border-2 border-[#111] overflow-hidden bg-muted transition-transform group-hover:scale-110"
                         style={{ zIndex: 10 - i }}
                         title={user.display_name || user.username}
                       >
-                        <img 
-                          src={getUserAvatarUrlFromPartial(user)} 
+                        <img
+                          src={getUserAvatarUrlFromPartial(user)}
                           alt={user.username}
                           className="w-full h-full object-cover"
                         />
                       </div>
                     ))}
                     {block.origin_map.users_count > 5 && (
-                      <div 
+                      <div
                         className="w-8 h-8 rounded-full border-2 border-[#111] bg-[#222] flex items-center justify-center text-[10px] font-bold text-white z-0 transition-transform group-hover:scale-110"
                         title={`${block.origin_map.users_count} users saved this`}
                       >
@@ -140,27 +192,30 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
                   </div>
                 </button>
               </PopoverTrigger>
-              <PopoverContent 
-                align="start" 
-                side="bottom" 
+              <PopoverContent
+                align="start"
+                side="bottom"
                 sideOffset={8}
                 alignOffset={-8}
                 className="w-80 max-h-96 overflow-y-auto"
               >
                 <div className="space-y-3">
                   <div className="text-sm font-semibold text-foreground">
-                    {block.origin_map.users_count} {block.origin_map.users_count === 1 ? 'user' : 'users'} saved this
+                    {block.origin_map.users_count}{" "}
+                    {block.origin_map.users_count === 1 ? "user" : "users"} saved
+                    this
                   </div>
                   <div className="space-y-2">
                     {block.origin_map.users.map((user) => (
-                      <div
+                      <button
                         key={user.username}
-                        className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors cursor-pointer"
-                        onClick={() => router.push(`/users/${user.username}`)}
+                        type="button"
+                        className="w-full text-left flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors cursor-pointer"
+                        onClick={() => handleUserClick(user.username)}
                       >
                         <div className="w-10 h-10 rounded-full border-2 border-[#111] overflow-hidden bg-muted shrink-0">
-                          <img 
-                            src={getUserAvatarUrlFromPartial(user)} 
+                          <img
+                            src={getUserAvatarUrlFromPartial(user)}
                             alt={user.username}
                             className="w-full h-full object-cover"
                           />
@@ -175,7 +230,7 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
                             </div>
                           )}
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -211,6 +266,7 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
       <aside className="relative w-[450px] border-l border-white/5 bg-background p-10 flex-col gap-10 overflow-y-auto hidden lg:flex">
         {/* Close Button - Top Right of Sidebar */}
         <button
+          type="button"
           onClick={handleClose}
           className="absolute top-6 right-6 z-50 p-2 rounded-full bg-black/20 hover:bg-black/40 transition-colors text-white backdrop-blur-md"
           aria-label="Close"
@@ -255,29 +311,40 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
         {/* Color Palette */}
         {block.color_hexes && block.color_hexes.length > 0 && (
           <div className="flex flex-col gap-4">
-            <h3 className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/60">Color Palette</h3>
+            <h3 className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/60">
+              Color Palette
+            </h3>
             <div className="flex flex-wrap gap-3">
-              {block.color_hexes.map((hex) => (
-                <button
-                  key={hex}
-                  onClick={() => handleColorClick(hex)}
-                  className="group flex h-10 w-10 min-w-[40px] max-w-[130px] cursor-pointer items-center justify-center overflow-hidden whitespace-nowrap rounded-[20px] border transition-all duration-300 delay-100 hover:w-auto hover:px-3 hover:delay-0 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 focus:ring-offset-gray-950"
-                  style={{ 
-                    backgroundColor: hex,
-                    borderColor: 'rgba(255, 255, 255, 0.1)'
-                  }}
-                  title={`Search by ${hex}`}
-                  aria-label={`Search by trending color ${hex}`}
-                >
-                  <Search 
-                    size={12} 
-                    className="mr-2 h-3 w-3 opacity-0 transition-opacity duration-300 group-hover:opacity-80 text-black shrink-0" 
-                  />
-                  <span className="truncate text-[14px] font-medium opacity-0 transition-opacity duration-300 group-hover:opacity-80 text-black">
-                    {hex}
-                  </span>
-                </button>
-              ))}
+              {block.color_hexes.map((hex) => {
+                const { readableText, readableIcon, borderColor } =
+                  getColorPillStyles(hex);
+                return (
+                  <button
+                    key={hex}
+                    type="button"
+                    onClick={() => handleColorClick(hex)}
+                    className="group flex h-10 w-10 min-w-[40px] max-w-[130px] cursor-pointer items-center justify-center overflow-hidden whitespace-nowrap rounded-[20px] border transition-all duration-300 delay-100 hover:w-auto hover:px-3 hover:delay-0 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 focus:ring-offset-gray-950"
+                    style={{
+                      backgroundColor: hex,
+                      borderColor,
+                    }}
+                    title={`Search by ${hex}`}
+                    aria-label={`Search by trending color ${hex}`}
+                  >
+                    <Search
+                      size={12}
+                      className="mr-2 h-3 w-3 opacity-0 transition-opacity duration-300 group-hover:opacity-85 shrink-0"
+                      style={{ color: readableIcon }}
+                    />
+                    <span
+                      className="truncate text-[14px] font-medium opacity-0 transition-opacity duration-300 group-hover:opacity-90"
+                      style={{ color: readableText }}
+                    >
+                      {hex}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -285,11 +352,14 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
         {/* AI Tags */}
         {block.ai_tags && block.ai_tags.length > 0 && (
           <div className="flex flex-col gap-4">
-            <h3 className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/60">AI Tags</h3>
+            <h3 className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground/60">
+              AI Tags
+            </h3>
             <div className="flex flex-wrap gap-2.5">
               {block.ai_tags.map((tag) => (
                 <button
                   key={tag}
+                  type="button"
                   onClick={() => handleTagClick(tag)}
                   className="px-5 py-2.5 rounded-full bg-white/5 hover:bg-white/10 text-[13px] font-medium transition-colors border border-white/5 active:bg-white/15 cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1 focus:ring-offset-gray-950"
                 >
@@ -299,7 +369,6 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
             </div>
           </div>
         )}
-
       </aside>
     </div>
   );

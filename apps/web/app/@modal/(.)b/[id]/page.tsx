@@ -1,4 +1,3 @@
-import { fetchBlockById } from "@/lib/api";
 import { BlockDetails } from "@/components/BlockDetails";
 import { notFound } from "next/navigation";
 
@@ -8,19 +7,21 @@ interface PageProps {
 
 export default async function BlockModalPage({ params }: PageProps) {
   const { id } = await params;
-  
+
   try {
     const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
-    const res = await fetch(`${CMS_URL}/api/blocks?externalId=${id}&limit=1`, { cache: 'no-store' });
-    
+    const res = await fetch(`${CMS_URL}/api/blocks?externalId=${id}&limit=1`, {
+      cache: "no-store",
+    });
+
     if (!res.ok) {
-        return notFound();
+      return notFound();
     }
-    
+
     const data = await res.json();
-    
+
     if (!data.success || !data.blocks || data.blocks.length === 0) {
-        return notFound();
+      return notFound();
     }
 
     const block = data.blocks[0];

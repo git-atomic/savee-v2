@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   Popover,
   PopoverContent,
@@ -26,6 +26,7 @@ export function Navigation() {
   const lastScrollY = useRef(0);
   const scrollThreshold = 10; // Minimum scroll distance to trigger hide/show
   const searchPopoverRef = useRef<SearchPopoverRef>(null);
+  const isVisibleRef = useRef(true);
   
   // Hide navigation when viewing block details
   const isBlockDetail = pathname?.startsWith("/b/");
@@ -36,6 +37,13 @@ export function Navigation() {
     { href: "/users", label: "Users" },
   ];
 
+  const setVisibleIfChanged = useCallback((nextVisible: boolean) => {
+    if (isVisibleRef.current !== nextVisible) {
+      isVisibleRef.current = nextVisible;
+      setIsVisible(nextVisible);
+    }
+  }, []);
+
   useEffect(() => {
     // Don't set up scroll handlers if we're on a block detail page
     if (isBlockDetail) {
@@ -43,9 +51,7 @@ export function Navigation() {
     }
     // Set initial scroll position and visibility after hydration
     lastScrollY.current = window.scrollY;
-    setTimeout(() => {
-      setIsVisible(window.scrollY < scrollThreshold);
-    }, 0);
+    setVisibleIfChanged(window.scrollY < scrollThreshold);
 
     // Throttle scroll handler using requestAnimationFrame for smooth performance
     const handleScroll = () => {
@@ -59,7 +65,7 @@ export function Navigation() {
 
         // Always show nav at the top
         if (currentScrollY < scrollThreshold) {
-          setIsVisible(true);
+          setVisibleIfChanged(true);
           lastScrollY.current = currentScrollY;
           return;
         }
@@ -68,13 +74,13 @@ export function Navigation() {
         if (Math.abs(scrollDelta) > 5) {
           // Scrolling down: hide nav and close popovers
           if (scrollDelta > 0) {
-            setIsVisible(false);
+            setVisibleIfChanged(false);
             setSettingsOpen(false);
             searchPopoverRef.current?.close();
           }
           // Scrolling up: show nav
           else if (scrollDelta < 0) {
-            setIsVisible(true);
+            setVisibleIfChanged(true);
           }
 
           lastScrollY.current = currentScrollY;
@@ -89,7 +95,7 @@ export function Navigation() {
         cancelAnimationFrame(rafRef.current);
       }
     };
-  }, [scrollThreshold, isBlockDetail]);
+  }, [isBlockDetail, setVisibleIfChanged]);
 
   // Don't render navigation on block detail pages
   if (isBlockDetail) {

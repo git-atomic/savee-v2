@@ -143,28 +143,11 @@
 
 /* Prevent layout shifts and optimize rendering */
 @layer utilities {
-  /* Optimize image loading */
-  img {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 300px;
-  }
-  
-  /* Prevent layout shifts during transitions */
-  [data-masonry-item] {
-    contain: layout style paint;
-    will-change: contents;
-  }
-  
   /* Smooth scroll behavior */
   html {
     scroll-behavior: smooth;
   }
-  
-  /* Optimize font loading */
-  body {
-    font-display: swap;
-  }
-  
+
   /* Hide scrollbar but keep functionality */
   .no-scrollbar {
     -ms-overflow-style: none;

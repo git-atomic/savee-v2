@@ -1,6 +1,13 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+} from "react";
 
 interface LayoutSettings {
   columns: number;
@@ -49,23 +56,28 @@ export function LayoutSettingsProvider({ children }: { children: React.ReactNode
     }
   }, [settings]);
 
-  const setColumns = (columns: number) => {
-    setSettings((prev) => ({ ...prev, columns }));
-  };
+  const setColumns = useCallback((columns: number) => {
+    setSettings((prev) =>
+      prev.columns === columns ? prev : { ...prev, columns }
+    );
+  }, []);
 
-  const setGap = (gap: number) => {
-    setSettings((prev) => ({ ...prev, gap }));
-  };
+  const setGap = useCallback((gap: number) => {
+    setSettings((prev) => (prev.gap === gap ? prev : { ...prev, gap }));
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      columns: settings.columns,
+      gap: settings.gap,
+      setColumns,
+      setGap,
+    }),
+    [settings.columns, settings.gap, setColumns, setGap]
+  );
 
   return (
-    <LayoutSettingsContext.Provider
-      value={{
-        columns: settings.columns,
-        gap: settings.gap,
-        setColumns,
-        setGap,
-      }}
-    >
+    <LayoutSettingsContext.Provider value={value}>
       {children}
     </LayoutSettingsContext.Provider>
   );

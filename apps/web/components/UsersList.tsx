@@ -5,6 +5,7 @@ import { UserCard } from "./UserCard";
 import { fetchUsers } from "@/lib/api";
 import type { User } from "@/lib/api";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { useIntersectionObserverPool } from "@/hooks/use-intersection-observer-pool";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
@@ -20,10 +21,29 @@ export function UsersList() {
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const isLoadingRef = useRef(false);
+  const lastRequestedCursorRef = useRef<string | null | undefined>(undefined);
 
   const loadUsers = useCallback(
     async (nextCursor?: string | null, signal?: AbortSignal, attempt = 0) => {
+      const cursorKey = nextCursor ?? null;
+
+      if (isLoadingRef.current) {
+        return;
+      }
+
+      if (
+        lastRequestedCursorRef.current !== undefined &&
+        lastRequestedCursorRef.current === cursorKey
+      ) {
+        return;
+      }
+
       try {
+        isLoadingRef.current = true;
+        lastRequestedCursorRef.current = cursorKey;
+
         if (!nextCursor) {
           setIsLoading(true);
           setUsers([]);
@@ -45,23 +65,26 @@ export function UsersList() {
 
         setCursor(response.nextCursor || null);
         setHasMore(Boolean(response.nextCursor));
-        setRetryCount(0); // Reset retry count on success
+        setRetryCount(0);
       } catch (err) {
         if (
           signal?.aborted ||
           (err instanceof Error && err.name === "AbortError")
-        )
+        ) {
           return;
+        }
+
+        lastRequestedCursorRef.current = undefined;
 
         const errorMessage =
           err instanceof Error ? err.message : "Failed to load users";
 
-        // Retry logic for transient errors
         if (attempt < MAX_RETRIES && !nextCursor) {
-          const delay = RETRY_DELAY * Math.pow(2, attempt); // Exponential backoff
+          const delay = RETRY_DELAY * Math.pow(2, attempt);
           setRetryCount(attempt + 1);
 
           retryTimeoutRef.current = setTimeout(() => {
+            isLoadingRef.current = false;
             loadUsers(nextCursor, signal, attempt + 1);
           }, delay);
 
@@ -74,6 +97,7 @@ export function UsersList() {
           setHasMore(false);
         }
       } finally {
+        isLoadingRef.current = false;
         if (!signal?.aborted) {
           setIsLoading(false);
           setIsLoadingMore(false);
@@ -86,13 +110,11 @@ export function UsersList() {
   useEffect(() => {
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    lastRequestedCursorRef.current = undefined;
 
     loadUsers(null, controller.signal);
 
     return () => {
-      // Clear the controller reference; we intentionally do NOT call abort()
-      // here because some environments surface `AbortError` from cleanup,
-      // which bubbles into the Next.js overlay as a runtime error.
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
       }
@@ -100,11 +122,19 @@ export function UsersList() {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;
       }
+      controller.abort();
     };
   }, [loadUsers]);
 
   const handleLoadMore = useCallback(() => {
-    if (!isLoadingMore && !isLoading && hasMore && cursor) {
+    if (
+      !isLoadingRef.current &&
+      !isLoadingMore &&
+      !isLoading &&
+      hasMore &&
+      cursor &&
+      cursor !== lastRequestedCursorRef.current
+    ) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
       loadUsers(cursor, controller.signal);
@@ -114,35 +144,31 @@ export function UsersList() {
   const handleRetry = useCallback(() => {
     setError(null);
     setRetryCount(0);
+    lastRequestedCursorRef.current = undefined;
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    loadUsers(cursor || null, controller.signal);
-  }, [cursor, loadUsers]);
+    loadUsers(null, controller.signal);
+  }, [loadUsers]);
 
-  // Infinite scroll with intersection observer
-  useEffect(() => {
-    if (!hasMore || isLoadingMore || isLoading) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
+  const setSentinelElement = useIntersectionObserverPool(
+    useCallback(
+      (isIntersecting) => {
+        if (isIntersecting) {
           handleLoadMore();
         }
       },
-      { rootMargin: "400px" }
-    );
+      [handleLoadMore]
+    ),
+    { rootMargin: "400px", threshold: 0 }
+  );
 
-    const sentinel = document.getElementById("users-sentinel");
-    if (sentinel) {
-      observer.observe(sentinel);
+  useEffect(() => {
+    if (sentinelRef.current && hasMore && !isLoadingMore && !isLoading) {
+      setSentinelElement(sentinelRef.current);
+    } else {
+      setSentinelElement(null);
     }
-
-    return () => {
-      if (sentinel) {
-        observer.unobserve(sentinel);
-      }
-    };
-  }, [hasMore, isLoadingMore, isLoading, handleLoadMore]);
+  }, [hasMore, isLoadingMore, isLoading, setSentinelElement]);
 
   if (error && users.length === 0 && !isLoading) {
     return (
@@ -169,7 +195,7 @@ export function UsersList() {
 
   return (
     <ErrorBoundary>
-      <div 
+      <div
         className="min-h-screen w-full max-w-full"
         style={{
           paddingTop: "var(--page-margin)",
@@ -178,12 +204,8 @@ export function UsersList() {
           paddingRight: "var(--page-margin)",
         }}
       >
-        {/* Total count badge */}
         {totalCount !== null && (
-          <div 
-            className="flex justify-start"
-            style={{ marginBottom: "var(--page-margin)" }}
-          >
+          <div className="flex justify-start" style={{ marginBottom: "var(--page-margin)" }}>
             <div className="rounded-lg border border-border bg-card px-4 py-2 text-sm text-muted-foreground">
               <span className="font-medium text-foreground">
                 {totalCount.toLocaleString()}
@@ -194,7 +216,7 @@ export function UsersList() {
         )}
 
         {isLoading && users.length === 0 ? (
-          <div 
+          <div
             className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
             style={{ gap: "var(--page-margin)" }}
           >
@@ -216,7 +238,7 @@ export function UsersList() {
           </div>
         ) : users.length > 0 ? (
           <>
-            <div 
+            <div
               className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
               style={{ gap: "var(--page-margin)" }}
             >
@@ -225,18 +247,12 @@ export function UsersList() {
               ))}
             </div>
 
-            {/* Infinite scroll sentinel */}
             {hasMore && (
-              <div
-                id="users-sentinel"
-                className="h-4 w-full"
-                aria-hidden="true"
-              />
+              <div ref={sentinelRef} className="h-4 w-full" aria-hidden="true" />
             )}
 
-            {/* Loading more indicator */}
             {isLoadingMore && (
-              <div 
+              <div
                 className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
                 style={{ gap: "var(--page-margin)" }}
               >
@@ -266,3 +282,4 @@ export function UsersList() {
     </ErrorBoundary>
   );
 }
+

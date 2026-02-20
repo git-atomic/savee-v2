@@ -7,7 +7,6 @@ import {
   useEffect,
   useCallback,
   useMemo,
-  startTransition,
 } from "react";
 import { useRouter } from "next/navigation";
 import type { Block } from "@/types/block";
@@ -110,7 +109,6 @@ function BlockCardComponent({
     getBlockMediaUrl(block, { preferProxy: false })
   );
   const [isLoaded, setIsLoaded] = useState(wasPreviouslyLoaded);
-  const [hasError, setHasError] = useState(false);
   const [shouldLoad, setShouldLoad] = useState(priority || wasPreviouslyLoaded);
   const [isHovered, setIsHovered] = useState(false);
   const [isVideoLoaded, setIsVideoLoaded] = useState(wasPreviouslyLoaded);
@@ -130,6 +128,7 @@ function BlockCardComponent({
   const timeUpdateRafRef = useRef<number | null>(null);
   const lastTimeUpdateRef = useRef<number>(0);
   const loopTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const attemptedImageFallbackRef = useRef(false);
 
   // Computed values
   const isVideo = block.media_type === "video" || Boolean(block.video_url);
@@ -337,16 +336,12 @@ function BlockCardComponent({
           video.pause();
           // Mark that video has been played so we show paused frame instead of thumbnail
           if (video.currentTime > 0) {
-            startTransition(() => {
-              setHasVideoPlayed(true);
-            });
+            setHasVideoPlayed(true);
           }
         } else if (video.currentTime > 0) {
           // Save position even if already paused (in case it changed)
           videoPositionRef.current = video.currentTime;
-          startTransition(() => {
-            setHasVideoPlayed(true);
-          });
+          setHasVideoPlayed(true);
         }
         // Ensure video stays at current position and doesn't reset
         if (videoPositionRef.current > 0 && video.duration > 0) {
@@ -372,11 +367,6 @@ function BlockCardComponent({
       const video = videoRef.current;
       if (video) {
         video.pause();
-        video.src = "";
-        video.load();
-        // Clear all event listeners
-        const newVideo = video.cloneNode(false) as HTMLVideoElement;
-        video.replaceWith(newVideo);
       }
       if (hoverTimeoutRef.current) {
         clearTimeout(hoverTimeoutRef.current);
@@ -428,17 +418,25 @@ function BlockCardComponent({
   }, [aspectRatio, propAspectRatio, block.id]);
 
   const handleImageError = useCallback(() => {
-    setHasError(true);
     const fallback =
       block.thumbnail_url || block.image_url || block.video_url || "";
-    if (fallback && fallback !== imageSrc) {
+
+    if (
+      !attemptedImageFallbackRef.current &&
+      fallback &&
+      fallback !== imageSrc
+    ) {
+      attemptedImageFallbackRef.current = true;
       setImageSrc(fallback);
       setIsLoaded(false);
+      return;
     }
+
+    setImageSrc("");
+    setIsLoaded(false);
   }, [block, imageSrc]);
 
   const handleVideoError = useCallback(() => {
-    setHasError(true);
     if (imageSrc && !isLoaded) {
       setIsLoaded(true);
     }
@@ -576,7 +574,7 @@ function BlockCardComponent({
                   <img
                     ref={imgRef}
                     src={imageSrc}
-                    alt={block.title || "Video thumbnail"}
+                    alt=""
                     className="absolute inset-0 h-full w-full"
                     loading={priority ? "eager" : "lazy"}
                     decoding="async"
@@ -590,7 +588,7 @@ function BlockCardComponent({
                         : "opacity 0.25s ease-out",
                       objectFit: "cover",
                     }}
-                    aria-hidden={hasVideoPlayed}
+                    aria-hidden="true"
                   />
                 )}
 
@@ -625,41 +623,43 @@ function BlockCardComponent({
                 )}
 
                 {/* Video badge - visible when not hovering */}
-                <div
-                  className={`pointer-events-none absolute bottom-2 left-2 z-20 flex items-center gap-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-white backdrop-blur-sm transition-opacity duration-200 ${
-                    isHovered ? "opacity-0" : "opacity-100"
-                  }`}
-                  aria-label="Video content"
-                >
-                  {/* Shimmer overlay */}
-                  {!isVideoLoaded && isHovered && (
-                    <div
-                      className="absolute inset-0 rounded-full"
-                      style={{
-                        background: `linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%)`,
-                        backgroundSize: "200% 100%",
-                        animation: "shimmer 1.5s infinite linear",
-                      }}
-                    />
-                  )}
-                  <svg
-                    width="8"
-                    height="8"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    className="relative z-10 shrink-0"
-                    aria-hidden="true"
+                {(isLoaded || hasVideoPlayed || isVideoLoaded) && (
+                  <div
+                    className={`pointer-events-none absolute bottom-2 left-2 z-20 flex items-center gap-1 rounded-full bg-black/70 px-1.5 py-0.5 text-[9px] font-semibold text-white backdrop-blur-sm transition-opacity duration-200 ${
+                      isHovered ? "opacity-0" : "opacity-100"
+                    }`}
+                    aria-label="Video content"
                   >
-                    <polygon points="5 3 19 12 5 21 5 3" />
-                  </svg>
-                  <span className="relative z-10">VIDEO</span>
-                </div>
+                    {!isVideoLoaded && isHovered && (
+                      <div
+                        className="absolute inset-0 rounded-full"
+                        style={{
+                          background:
+                            "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%)",
+                          backgroundSize: "200% 100%",
+                          animation: "shimmer 1.5s infinite linear",
+                        }}
+                      />
+                    )}
+                    <svg
+                      width="8"
+                      height="8"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      className="relative z-10 shrink-0"
+                      aria-hidden="true"
+                    >
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                    <span className="relative z-10">VIDEO</span>
+                  </div>
+                )}
               </>
             ) : imageSrc ? (
               <img
                 ref={imgRef}
                 src={imageSrc}
-                alt={block.title || "Block image"}
+                alt=""
                 className="absolute inset-0 h-full w-full"
                 loading={priority ? "eager" : "lazy"}
                 decoding="async"
@@ -673,6 +673,7 @@ function BlockCardComponent({
                     : "opacity 0.3s ease-out",
                   objectFit: "cover",
                 }}
+                aria-hidden="true"
               />
             ) : null}
 

@@ -223,10 +223,12 @@ export function MasonryGrid({
       <div
         className="grid"
         style={{
-          // Use fixed column widths instead of 1fr to prevent width expansion when gap changes
-          gridTemplateColumns: `repeat(${columns}, ${columnWidth}px)`,
+          // Use fractional columns until measured to avoid 0px columns on first paint.
+          gridTemplateColumns:
+            columnWidth > 0
+              ? `repeat(${columns}, ${columnWidth}px)`
+              : `repeat(${columns}, minmax(0, 1fr))`,
           gap: `${gap}px`,
-          willChange: "contents", // Optimize for layout changes
         }}
       >
         {columnDistribution.columns.map((colBlocks, colIndex) => (

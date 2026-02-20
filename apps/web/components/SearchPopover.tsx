@@ -7,7 +7,6 @@ import {
   useCallback,
   useImperativeHandle,
   forwardRef,
-  startTransition,
 } from "react";
 import { useRouter } from "next/navigation";
 import { Search, X, Palette } from "lucide-react";
@@ -88,11 +87,11 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
   const [autocompleteResults, setAutocompleteResults] = useState<Block[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
-  const [anchorElement, setAnchorElement] = useState<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const anchorElementRef = useRef<HTMLDivElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const focusTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useImperativeHandle(ref, () => ({
     close: () => setOpen(false),
@@ -109,17 +108,15 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
     [router]
   );
 
+  const setSearchAnchorRef = useCallback((el: HTMLDivElement | null) => {
+    anchorElementRef.current = el;
+  }, []);
+
   useEffect(() => {
     if (!open) {
-      // Don't clear the query - keep it in the input
-      // Only clear autocomplete results and reset states
-      // Use startTransition to avoid synchronous setState in effect
-      startTransition(() => {
-        setAutocompleteResults([]);
-        setIsSearching(false);
-        setColorPickerOpen(false);
-      });
-      // Clean up any pending requests
+      setAutocompleteResults([]);
+      setIsSearching(false);
+      setColorPickerOpen(false);
       if (debounceTimeoutRef.current) {
         clearTimeout(debounceTimeoutRef.current);
         debounceTimeoutRef.current = null;
@@ -132,9 +129,16 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
     }
 
     // Focus input when popover opens
-    setTimeout(() => {
+    focusTimerRef.current = setTimeout(() => {
       inputRef.current?.focus();
     }, 100);
+
+    return () => {
+      if (focusTimerRef.current) {
+        clearTimeout(focusTimerRef.current);
+        focusTimerRef.current = null;
+      }
+    };
   }, [open]);
 
   // Debounced search effect
@@ -145,26 +149,14 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
       debounceTimeoutRef.current = null;
     }
 
-    // Cancel previous search safely
-    if (abortControllerRef.current) {
-      try {
-        if (!abortControllerRef.current.signal.aborted) {
-          abortControllerRef.current.abort();
-        }
-      } catch {
-        // Ignore abort errors
-      }
-      abortControllerRef.current = null;
-    }
+    safeAbort(abortControllerRef.current);
+    abortControllerRef.current = null;
 
     if (query.trim().length > 1) {
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      // Use requestAnimationFrame to avoid synchronous setState in effect
-      requestAnimationFrame(() => {
-        setIsSearching(true);
-      });
+      setIsSearching(true);
 
       // Debounce search
       debounceTimeoutRef.current = setTimeout(() => {
@@ -193,11 +185,8 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
           });
       }, 300);
     } else {
-      // Use startTransition to avoid synchronous setState in effect
-      startTransition(() => {
-        setAutocompleteResults([]);
-        setIsSearching(false);
-      });
+      setAutocompleteResults([]);
+      setIsSearching(false);
     }
 
     // Cleanup function
@@ -235,13 +224,7 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverAnchor asChild>
-          <div
-            ref={(el) => {
-              searchContainerRef.current = el;
-              setAnchorElement(el);
-            }}
-            className="relative w-full"
-          >
+          <div ref={setSearchAnchorRef} className="relative w-full">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
@@ -293,14 +276,23 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
                 <h3 className="text-sm font-semibold mb-3">Recents</h3>
                 <div className="flex flex-wrap gap-2">
                   {recentSearches.map((recent) => (
-                    <button
+                    <div
                       key={recent}
                       onClick={() => handleSearch(recent)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleSearch(recent);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
                       className="group relative flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted hover:bg-muted/80 transition-colors text-sm"
                       title={`Search for ${recent}`}
                     >
                       <span>{recent}</span>
                       <button
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           removeRecentSearch(recent);
@@ -311,7 +303,7 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
                       >
                         <X className="h-3 w-3" />
                       </button>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -355,7 +347,7 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
                               <div className="relative h-12 w-12 rounded-lg overflow-hidden bg-muted shrink-0">
                                 <Image
                                   src={mediaUrl}
-                                  alt={block.title || "Block"}
+                                  alt=""
                                   fill
                                   className="object-cover"
                                   sizes="48px"
@@ -495,7 +487,7 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
         <ColorPickerPopover
           open={colorPickerOpen}
           onOpenChange={setColorPickerOpen}
-          anchorElement={anchorElement}
+          anchorElement={anchorElementRef.current}
         />
       )}
     </>

@@ -4,7 +4,11 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { MasonryGrid } from "./MasonryGrid";
 import { MasonrySkeleton } from "./MasonrySkeleton";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { fetchUserByUsername, fetchBlocksByUsername, getUserAvatarUrl } from "@/lib/api";
+import {
+  fetchUserByUsername,
+  fetchBlocksByUsername,
+  getUserAvatarUrl,
+} from "@/lib/api";
 import type { Block } from "@/types/block";
 import type { User } from "@/lib/api";
 import { useMasonryColumns } from "@/hooks/use-masonry-columns";
@@ -18,14 +22,12 @@ import {
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
 
-// Helper function to safely abort a controller without throwing errors
-// Only used for manual aborts (e.g., when starting a new request), not in cleanup
 function safeAbort(controller: AbortController | null): void {
   if (!controller || controller.signal.aborted) return;
   try {
     controller.abort();
   } catch {
-    // Silently ignore any errors during abort
+    // Ignore abort errors during teardown.
   }
 }
 
@@ -43,40 +45,41 @@ export function UserProfile({ username }: UserProfileProps) {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const userAbortControllerRef = useRef<AbortController | null>(null);
+  const blocksAbortControllerRef = useRef<AbortController | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isLoadingRef = useRef(false); // Guard against concurrent loads
+  const isLoadingRef = useRef(false);
+  const lastRequestedCursorRef = useRef<string | null | undefined>(undefined);
 
   const columns = useMasonryColumns();
 
-  // Load user data
   useEffect(() => {
     const controller = new AbortController();
-    abortControllerRef.current = controller;
+    userAbortControllerRef.current = controller;
+    setIsLoadingUser(true);
+    setError(null);
 
     const loadUser = async () => {
       try {
-        setIsLoadingUser(true);
-        setError(null);
-
         const response = await fetchUserByUsername(username, controller.signal);
-
         if (controller.signal.aborted) return;
 
         if (response.success && response.user) {
           setUser(response.user);
         } else {
+          setUser(null);
           setError(response.error || "User not found");
         }
       } catch (err) {
         if (
           controller.signal.aborted ||
           (err instanceof Error && err.name === "AbortError")
-        )
+        ) {
           return;
-
+        }
         const errorMessage =
           err instanceof Error ? err.message : "Failed to load user";
+        setUser(null);
         setError(errorMessage);
       } finally {
         if (!controller.signal.aborted) {
@@ -88,36 +91,35 @@ export function UserProfile({ username }: UserProfileProps) {
     loadUser();
 
     return () => {
-      // Clear the controller reference; we intentionally do NOT call abort()
-      // here because some environments surface `AbortError` from cleanup,
-      // which bubbles into the Next.js overlay as a runtime error.
-      // The async functions check signal.aborted and return early, so requests
-      // will complete but their results will be ignored.
-      if (abortControllerRef.current === controller) {
-        abortControllerRef.current = null;
+      if (userAbortControllerRef.current === controller) {
+        userAbortControllerRef.current = null;
       }
+      safeAbort(controller);
     };
   }, [username]);
 
-  // Load blocks
   const loadBlocks = useCallback(
     async (nextCursor?: string | null, signal?: AbortSignal, attempt = 0) => {
-      // Prevent concurrent loads (race condition guard)
-      if (isLoadingRef.current && !nextCursor) {
-        return; // Initial load already in progress
+      const cursorKey = nextCursor ?? null;
+
+      if (isLoadingRef.current) {
+        return;
       }
-      
+      if (
+        lastRequestedCursorRef.current !== undefined &&
+        lastRequestedCursorRef.current === cursorKey
+      ) {
+        return;
+      }
+
       try {
         isLoadingRef.current = true;
-        
+        lastRequestedCursorRef.current = cursorKey;
+
         if (!nextCursor) {
           setIsLoading(true);
           setBlocks([]);
         } else {
-          // Prevent concurrent pagination loads
-          if (isLoadingMore) {
-            return;
-          }
           setIsLoadingMore(true);
         }
         setError(null);
@@ -139,23 +141,26 @@ export function UserProfile({ username }: UserProfileProps) {
 
         setCursor(response.nextCursor || null);
         setHasMore(Boolean(response.nextCursor));
-        setRetryCount(0); // Reset retry count on success
+        setRetryCount(0);
       } catch (err) {
         if (
           signal?.aborted ||
           (err instanceof Error && err.name === "AbortError")
-        )
+        ) {
           return;
+        }
+
+        lastRequestedCursorRef.current = undefined;
 
         const errorMessage =
           err instanceof Error ? err.message : "Failed to load blocks";
 
-        // Retry logic for transient errors
         if (attempt < MAX_RETRIES && !nextCursor) {
-          const delay = RETRY_DELAY * Math.pow(2, attempt); // Exponential backoff
+          const delay = RETRY_DELAY * Math.pow(2, attempt);
           setRetryCount(attempt + 1);
 
           retryTimeoutRef.current = setTimeout(() => {
+            isLoadingRef.current = false;
             loadBlocks(nextCursor, signal, attempt + 1);
           }, delay);
 
@@ -163,7 +168,6 @@ export function UserProfile({ username }: UserProfileProps) {
         }
 
         setError(errorMessage);
-
         if (!nextCursor) {
           setHasMore(false);
         }
@@ -175,44 +179,40 @@ export function UserProfile({ username }: UserProfileProps) {
         }
       }
     },
-    [username, isLoadingMore]
+    [username]
   );
 
   useEffect(() => {
-    if (!user) return; // Wait for user to load first
+    if (!user) return;
 
     const controller = new AbortController();
-    abortControllerRef.current = controller;
-
+    blocksAbortControllerRef.current = controller;
+    lastRequestedCursorRef.current = undefined;
     loadBlocks(null, controller.signal);
 
     return () => {
-      // Clear retry timeout first
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;
       }
-      
-      // Clear the controller reference; we intentionally do NOT call abort()
-      // here because some environments surface `AbortError` from cleanup,
-      // which bubbles into the Next.js overlay as a runtime error.
-      // The async functions check signal.aborted and return early, so requests
-      // will complete but their results will be ignored.
-      if (abortControllerRef.current === controller) {
-        abortControllerRef.current = null;
+      if (blocksAbortControllerRef.current === controller) {
+        blocksAbortControllerRef.current = null;
       }
+      safeAbort(controller);
     };
   }, [user, loadBlocks]);
 
   const handleLoadMore = useCallback(() => {
-    if (!isLoadingMore && !isLoading && hasMore && cursor) {
-      // Abort any existing request before starting a new one
-      if (abortControllerRef.current) {
-        safeAbort(abortControllerRef.current);
-        abortControllerRef.current = null;
-      }
+    if (
+      !isLoadingRef.current &&
+      !isLoadingMore &&
+      !isLoading &&
+      hasMore &&
+      cursor &&
+      cursor !== lastRequestedCursorRef.current
+    ) {
       const controller = new AbortController();
-      abortControllerRef.current = controller;
+      blocksAbortControllerRef.current = controller;
       loadBlocks(cursor, controller.signal);
     }
   }, [isLoadingMore, isLoading, hasMore, cursor, loadBlocks]);
@@ -220,15 +220,13 @@ export function UserProfile({ username }: UserProfileProps) {
   const handleRetry = useCallback(() => {
     setError(null);
     setRetryCount(0);
-    // Abort any existing request before retrying
-    if (abortControllerRef.current) {
-      safeAbort(abortControllerRef.current);
-      abortControllerRef.current = null;
-    }
+    lastRequestedCursorRef.current = undefined;
+    safeAbort(blocksAbortControllerRef.current);
+
     const controller = new AbortController();
-    abortControllerRef.current = controller;
-    loadBlocks(cursor || null, controller.signal);
-  }, [cursor, loadBlocks]);
+    blocksAbortControllerRef.current = controller;
+    loadBlocks(null, controller.signal);
+  }, [loadBlocks]);
 
   if (isLoadingUser) {
     return (
@@ -276,7 +274,6 @@ export function UserProfile({ username }: UserProfileProps) {
   return (
     <ErrorBoundary>
       <div className="min-h-screen">
-        {/* Profile Header */}
         <div
           className="w-full"
           style={{
@@ -301,7 +298,7 @@ export function UserProfile({ username }: UserProfileProps) {
                 </h1>
                 {user.is_verified && (
                   <Badge variant="secondary" className="shrink-0">
-                    ✓
+                    Verified
                   </Badge>
                 )}
               </div>
@@ -311,8 +308,7 @@ export function UserProfile({ username }: UserProfileProps) {
                   {user.bio}
                 </p>
               )}
-              
-              {/* Additional Info */}
+
               <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-muted-foreground pt-2">
                 {user.location && (
                   <span className="flex items-center gap-1.5">
@@ -367,7 +363,6 @@ export function UserProfile({ username }: UserProfileProps) {
           </div>
         </div>
 
-        {/* Blocks Grid */}
         <div
           style={{
             paddingBottom: "var(--page-margin)",
@@ -418,3 +413,4 @@ export function UserProfile({ username }: UserProfileProps) {
     </ErrorBoundary>
   );
 }
+
