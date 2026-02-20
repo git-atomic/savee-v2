@@ -167,11 +167,18 @@ def build_scrolling_js(steps: int, wait_ms: int, until_idle: bool, idle_rounds: 
   function step() {
     window.scrollTo(0, document.body.scrollHeight);
     loops++;
-    const count = document.querySelectorAll('[id^=grid-item-]').length;
+    const gridCount = document.querySelectorAll('[id^=grid-item-]').length;
+    const anchorCount = document.querySelectorAll('a[href*="/i/"]').length;
+    const count = Math.max(gridCount, anchorCount);
     if (count <= prevCount) stagnantRounds++; else stagnantRounds = 0;
     prevCount = count;
+    const minLoopsBeforeIdle = 3;
     const reachedMax = (maxLoops > 0 && loops >= maxLoops);
-    const reachedIdle = (untilIdle && stagnantRounds >= idleRoundsTarget);
+    const reachedIdle = (
+      untilIdle &&
+      loops >= minLoopsBeforeIdle &&
+      stagnantRounds >= idleRoundsTarget
+    );
     if (reachedMax || reachedIdle) {
       collect(); window.__savee_scrolled = true; return;
     }
@@ -676,6 +683,97 @@ class SaveeScraper:
         links: List[str] = [f"{item_base_url}/i/{item_id}/" for item_id in ordered_ids]
         return links
 
+    async def _discover_listing_links(
+        self,
+        crawler: AsyncWebCrawler,
+        url: str,
+        scroll_steps: int,
+        scroll_wait_ms: int,
+        idle_rounds: int,
+    ) -> List[str]:
+        item_base_url = "https://savee.com"
+        listing_html = await self._fetch_listing_html(
+            crawler,
+            url,
+            scroll_steps=scroll_steps,
+            scroll_wait_ms=scroll_wait_ms,
+            until_idle=True,
+            idle_rounds=idle_rounds,
+        )
+        if listing_html:
+            links = self._find_item_links_in_html(listing_html, item_base_url=item_base_url)
+            if links:
+                return links
+
+        logger.info(
+            f"No item links discovered on first pass for {url}; retrying with aggressive fallback."
+        )
+
+        # Retry with stronger scrolling and explicit login refresh when creds are available.
+        aggressive_steps = max(scroll_steps, 18)
+        aggressive_wait_ms = max(scroll_wait_ms, 1200)
+        aggressive_idle_rounds = max(idle_rounds, 10)
+        fallback_urls = [url]
+        if not url.endswith("/"):
+            fallback_urls.append(f"{url}/")
+        if "/pop" in url and not url.rstrip("/").endswith("/pop"):
+            fallback_urls.append("https://savee.com/pop")
+        if "/pop" in url:
+            fallback_urls.append("https://savee.com/pop/")
+
+        last_html = listing_html or ""
+        for attempt, fallback_url in enumerate(list(dict.fromkeys(fallback_urls)), start=1):
+            if settings.SAVE_EMAIL and settings.SAVE_PASSWORD:
+                try:
+                    sp0 = urlsplit(fallback_url)
+                    base_url0 = f"{sp0.scheme}://{sp0.netloc}"
+                    await self._ensure_login(
+                        crawler,
+                        base_url0,
+                        settings.SAVE_EMAIL,
+                        settings.SAVE_PASSWORD,
+                    )
+                except Exception as e:
+                    logger.debug(f"Login refresh before listing fallback failed: {e}")
+
+            retry_html = await self._fetch_listing_html(
+                crawler,
+                fallback_url,
+                scroll_steps=aggressive_steps,
+                scroll_wait_ms=aggressive_wait_ms,
+                until_idle=True,
+                idle_rounds=aggressive_idle_rounds,
+            )
+            if retry_html:
+                last_html = retry_html
+                links = self._find_item_links_in_html(
+                    retry_html, item_base_url=item_base_url
+                )
+                if links:
+                    logger.info(
+                        f"Recovered listing links on fallback attempt {attempt} for {fallback_url}: {len(links)} links"
+                    )
+                    return links
+
+        lower_html = (last_html or "").lower()
+        blocked_markers = (
+            "cloudflare",
+            "captcha",
+            "verify you are human",
+            "access denied",
+            "just a moment",
+            "challenge",
+            "sign in",
+            "log in",
+        )
+        if any(marker in lower_html for marker in blocked_markers):
+            logger.warning(
+                f"No item links discovered for {url}; possible auth/challenge wall in listing HTML."
+            )
+        else:
+            logger.warning(f"No item links discovered for {url} after all fallbacks.")
+        return []
+
     async def _ensure_login(self, crawler: AsyncWebCrawler, base_url: str, email: str, password: str) -> None:
         if not email or not password:
             return
@@ -719,17 +817,13 @@ class SaveeScraper:
                 idle_rounds = int(os.getenv('SAVEESCRAPER_IDLE_ROUNDS', '5'))
             except Exception:
                 scroll_steps, scroll_wait_ms, idle_rounds = 10, 800, 5
-            listing_html = await self._fetch_listing_html(
-                crawler, url,
+            links = await self._discover_listing_links(
+                crawler,
+                url,
                 scroll_steps=scroll_steps,
                 scroll_wait_ms=scroll_wait_ms,
-                until_idle=True,
-                idle_rounds=idle_rounds
+                idle_rounds=idle_rounds,
             )
-            if not listing_html:
-                return items
-
-            links = self._find_item_links_in_html(listing_html, item_base_url="https://savee.com")
             if not links:
                 logger.info("No item links discovered.")
                 return items
@@ -860,19 +954,13 @@ class SaveeScraper:
                     idle_rounds = int(os.getenv('SAVEESCRAPER_IDLE_ROUNDS', '5'))
                 except Exception:
                     scroll_steps, scroll_wait_ms, idle_rounds = 6, 800, 5
-                listing_html = await self._fetch_listing_html(
-                    crawler, url,
+                item_links = await self._discover_listing_links(
+                    crawler,
+                    url,
                     scroll_steps=scroll_steps,
                     scroll_wait_ms=scroll_wait_ms,
-                    until_idle=True,
-                    idle_rounds=idle_rounds
+                    idle_rounds=idle_rounds,
                 )
-                if not listing_html:
-                    logger.warning(f"No HTML content retrieved from {url}")
-                    return
-
-                # Extract item links from the page
-                item_links = self._find_item_links_in_html(listing_html, item_base_url="https://savee.com")
                 if not item_links:
                     logger.info("No item links discovered.")
                     return
