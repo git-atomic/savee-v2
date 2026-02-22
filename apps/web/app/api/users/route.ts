@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 // Server-side CMS base URL
 const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
-const CACHE_MAX_AGE = 60; // 60 seconds
+const CACHE_MAX_AGE = 10; // 10 seconds
 
 export async function GET(req: NextRequest) {
   try {
@@ -19,15 +19,14 @@ export async function GET(req: NextRequest) {
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
     try {
-      const response = await fetch(
-        `${CMS_URL}/api/users?${cmsParams.toString()}`,
-        {
-          signal: controller.signal,
-          headers: {
-            Accept: "application/json",
-          },
-        }
-      );
+      const response = await fetch(`${CMS_URL}/api/users?${cmsParams.toString()}`, {
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+        },
+        cache: "no-store",
+        next: { revalidate: 0 },
+      });
 
       clearTimeout(timeoutId);
 

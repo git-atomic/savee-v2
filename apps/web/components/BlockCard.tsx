@@ -152,7 +152,7 @@ function BlockCardComponent({
   const displayAspectRatio =
     aspectRatio || getDeterministicAspectRatio(block.id) || 1;
   const shouldRenderVideo = Boolean(
-    isVideo && videoUrl && (isHovered || hasVideoPlayed || priority)
+    isVideo && videoUrl && (isHovered || hasVideoPlayed)
   );
 
   // Update ref when shouldLoad changes
@@ -597,10 +597,10 @@ function BlockCardComponent({
         }}
       >
         <div
-          className="absolute inset-0 bg-muted/55"
+          className="absolute inset-0 bg-muted/60"
           style={{
             opacity: isLoaded ? 0 : 1,
-            transition: "opacity 260ms cubic-bezier(0.22, 1, 0.36, 1)",
+            transition: "opacity 220ms ease-out",
           }}
           aria-hidden="true"
         />
@@ -635,12 +635,11 @@ function BlockCardComponent({
                     onLoad={handleImageLoad}
                     onError={handleImageError}
                     style={{
-                      opacity: hasVideoPlayed ? 0 : isLoaded ? 1 : 0.9,
-                      filter: isSharp ? "blur(0px)" : "blur(16px)",
-                      transform: isSharp ? "scale(1)" : "scale(1.03)",
+                      opacity: hasVideoPlayed ? 0 : isLoaded ? 1 : 0.95,
+                      transform: isSharp ? "scale(1)" : "scale(1.01)",
                       transition: wasPreviouslyLoaded
                         ? "none"
-                        : "opacity 240ms ease-out, filter 320ms cubic-bezier(0.22, 1, 0.36, 1), transform 320ms cubic-bezier(0.22, 1, 0.36, 1)",
+                        : "opacity 220ms ease-out, transform 240ms cubic-bezier(0.22, 1, 0.36, 1)",
                       objectFit: "cover",
                     }}
                     aria-hidden="true"
@@ -722,12 +721,11 @@ function BlockCardComponent({
                 onLoad={handleImageLoad}
                 onError={handleImageError}
                 style={{
-                  opacity: isLoaded ? 1 : 0.9,
-                  filter: isSharp ? "blur(0px)" : "blur(16px)",
-                  transform: isSharp ? "scale(1)" : "scale(1.03)",
+                  opacity: isLoaded ? 1 : 0.95,
+                  transform: isSharp ? "scale(1)" : "scale(1.01)",
                   transition: wasPreviouslyLoaded
                     ? "none"
-                    : "opacity 240ms ease-out, filter 320ms cubic-bezier(0.22, 1, 0.36, 1), transform 320ms cubic-bezier(0.22, 1, 0.36, 1)",
+                    : "opacity 220ms ease-out, transform 240ms cubic-bezier(0.22, 1, 0.36, 1)",
                   objectFit: "cover",
                 }}
                 aria-hidden="true"

@@ -6,36 +6,29 @@ import { fetchUsers } from "@/lib/api";
 import type { User } from "@/lib/api";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { useIntersectionObserverPool } from "@/hooks/use-intersection-observer-pool";
+import { restoreScrollPosition, saveScrollPosition } from "@/lib/scroll-state";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
 
 function mergeUniqueUsers(prev: User[], next: User[]): User[] {
-  const deduped = new Map<string, User>();
+  const byId = new Map<number, User>();
+  const usernameToId = new Map<string, number>();
 
-  for (const user of prev) {
-    deduped.set(`id:${user.id}`, user);
-    deduped.set(`username:${user.username.toLowerCase()}`, user);
-  }
+  for (const user of [...prev, ...next]) {
+    const normalizedUsername = user.username.toLowerCase();
+    const existingIdForUsername = usernameToId.get(normalizedUsername);
 
-  for (const user of next) {
-    const byId = deduped.get(`id:${user.id}`);
-    const byUsername = deduped.get(`username:${user.username.toLowerCase()}`);
-    if (byId || byUsername) {
+    if (existingIdForUsername !== undefined && existingIdForUsername !== user.id) {
       continue;
     }
-    deduped.set(`id:${user.id}`, user);
-    deduped.set(`username:${user.username.toLowerCase()}`, user);
+    if (!byId.has(user.id)) {
+      byId.set(user.id, user);
+      usernameToId.set(normalizedUsername, user.id);
+    }
   }
 
-  const uniqueUsers: User[] = [];
-  const seenIds = new Set<number>();
-  for (const user of deduped.values()) {
-    if (seenIds.has(user.id)) continue;
-    seenIds.add(user.id);
-    uniqueUsers.push(user);
-  }
-  return uniqueUsers;
+  return Array.from(byId.values());
 }
 
 export function UsersList() {
@@ -139,10 +132,12 @@ export function UsersList() {
     const controller = new AbortController();
     abortControllerRef.current = controller;
     lastRequestedCursorRef.current = undefined;
+    restoreScrollPosition("users");
 
     loadUsers(null, controller.signal);
 
     return () => {
+      saveScrollPosition("users");
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
       }
@@ -271,7 +266,7 @@ export function UsersList() {
               style={{ gap: "var(--page-margin)" }}
             >
               {users.map((user) => (
-                <UserCard key={user.id} user={user} />
+                <UserCard key={`${user.id}:${user.username}`} user={user} />
               ))}
             </div>
 

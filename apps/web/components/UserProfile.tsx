@@ -20,6 +20,7 @@ import {
   dedupeBlocksByStableKey,
   mergeUniqueBlocks,
 } from "@/lib/block-dedupe";
+import { restoreScrollPosition, saveScrollPosition } from "@/lib/scroll-state";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
@@ -218,6 +219,8 @@ export function UserProfile({ username }: UserProfileProps) {
 
   useEffect(() => {
     if (!user) return;
+    const scrollKey = `user:${username}`;
+    restoreScrollPosition(scrollKey);
 
     const cached = userBlocksCache.get(username);
     if (cached) {
@@ -234,6 +237,7 @@ export function UserProfile({ username }: UserProfileProps) {
     loadBlocks(null, controller.signal);
 
     return () => {
+      saveScrollPosition(scrollKey);
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;

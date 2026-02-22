@@ -313,6 +313,8 @@ playwright/.cache/
 # Storage state  
 storage_state.json
 savee_cookies.json
+savee_cookies.b64
+*.cookies.b64
 
 # IDE
 .vscode/

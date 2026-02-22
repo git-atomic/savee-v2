@@ -13,6 +13,7 @@ import {
   dedupeBlocksByStableKey,
   mergeUniqueBlocks,
 } from "@/lib/block-dedupe";
+import { restoreScrollPosition, saveScrollPosition } from "@/lib/scroll-state";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
@@ -149,6 +150,7 @@ export function BlocksList(
   useEffect(() => {
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    restoreScrollPosition(cacheKey);
 
     lastRequestedCursorRef.current = undefined as any;
     if (!hasCachedStateRef.current) {
@@ -158,12 +160,13 @@ export function BlocksList(
     }
 
     return () => {
+      saveScrollPosition(cacheKey);
       controller.abort();
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
       }
     };
-  }, [loadBlocks]); // Now stable, will only run once or when origin changes
+  }, [loadBlocks, cacheKey]); // Now stable, will only run once or when origin changes
 
   const handleLoadMore = useCallback(() => {
     // Only proceed if not already loading and we have a valid cursor that isn't already being loaded

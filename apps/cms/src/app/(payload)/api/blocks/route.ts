@@ -122,14 +122,15 @@ export async function GET(req: NextRequest) {
       : "private, no-cache, no-store, must-revalidate";
 
     // Parse cursor for pagination
-    let cursorSavedAt: string | null = null;
+    let cursorSortTs: string | null = null;
     let cursorId: string | null = null;
     let cursorPop: number | null = null;
+    const sortTimestampExpr = "COALESCE(b.updated_at, b.created_at, b.saved_at)";
     if (cursor) {
       try {
         const decoded = Buffer.from(cursor, "base64").toString();
         const parsed = JSON.parse(decoded);
-        cursorSavedAt = parsed.saved_at;
+        cursorSortTs = parsed.sort_ts || parsed.saved_at || null;
         cursorId = String(parsed.id);
         cursorPop = parsed.pop_count !== undefined ? Number(parsed.pop_count) : null;
       } catch (e) {
@@ -164,13 +165,13 @@ export async function GET(req: NextRequest) {
 
     // Stable pagination based on sorting
     if (origin === "pop") {
-      if (cursorPop !== null && cursorSavedAt && cursorId) {
+      if (cursorPop !== null && cursorSortTs && cursorId) {
         // Sort order for pop: count DESC, saved_at DESC, id DESC
         params.push(cursorPop);
-        params.push(cursorSavedAt);
+        params.push(cursorSortTs);
         params.push(cursorId);
         const p1 = params.length - 2; // cursorPop
-        const p2 = params.length - 1; // cursorSavedAt
+        const p2 = params.length - 1; // cursorSortTs
         const p3 = params.length;     // cursorId
         
         // We need to calculate the count in the WHERE clause for stable pagination
@@ -187,16 +188,16 @@ export async function GET(req: NextRequest) {
         )`;
         
         blockWhere.push(
-          `(${countSQL} < $${p1} OR (${countSQL} = $${p1} AND (b.saved_at < $${p2} OR (b.saved_at = $${p2} AND b.id < $${p3}))))`
+          `(${countSQL} < $${p1} OR (${countSQL} = $${p1} AND (${sortTimestampExpr} < $${p2} OR (${sortTimestampExpr} = $${p2} AND b.id < $${p3}))))`
         );
       }
     } else {
-      if (cursorSavedAt && cursorId) {
+      if (cursorSortTs && cursorId) {
         // Default sort order: saved_at DESC, id DESC
-        params.push(cursorSavedAt);
+        params.push(cursorSortTs);
         params.push(cursorId);
         blockWhere.push(
-          `(b.saved_at < $${params.length - 1} OR (b.saved_at = $${params.length - 1} AND b.id < $${params.length}))`
+          `(${sortTimestampExpr} < $${params.length - 1} OR (${sortTimestampExpr} = $${params.length - 1} AND b.id < $${params.length}))`
         );
       }
     }
@@ -277,6 +278,7 @@ export async function GET(req: NextRequest) {
       SELECT 
         b.*, 
         '${origin || "mixed"}' as origin,
+        ${sortTimestampExpr} as sort_ts,
         ${popCountSQL} as pop_count,
         NULL as source_username,
         (
@@ -344,7 +346,7 @@ export async function GET(req: NextRequest) {
         origin === "pop"
           ? `pop_count DESC NULLS LAST, `
           : ""
-      }b.saved_at DESC NULLS LAST, b.id DESC NULLS LAST
+      }sort_ts DESC NULLS LAST, b.id DESC NULLS LAST
       LIMIT $${params.length + 1}
     `;
     params.push(limit);
@@ -369,6 +371,7 @@ export async function GET(req: NextRequest) {
       const lastBlock = result.rows[result.rows.length - 1];
       nextCursor = Buffer.from(
         JSON.stringify({
+          sort_ts: lastBlock.sort_ts || lastBlock.saved_at,
           saved_at: lastBlock.saved_at,
           id: lastBlock.id,
           pop_count: lastBlock.pop_count,

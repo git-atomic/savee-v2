@@ -86,6 +86,13 @@
   --page-margin: 32px;
 }
 
+@media (max-width: 1023px) {
+  :root {
+    --nav-height: 108px;
+    --page-margin: 12px;
+  }
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
@@ -129,6 +136,17 @@
     font-feature-settings: "cv11" 1, "ss01" 1, "ss02" 1;
     font-variant-numeric: tabular-nums;
     font-optical-sizing: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

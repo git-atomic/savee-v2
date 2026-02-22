@@ -1371,18 +1371,37 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                     return None
                 return None
 
-            def _limits_exceeded(lim: Optional[dict]) -> tuple[bool, str]:
+            secondary_r2_configured = bool(
+                settings.SECONDARY_R2_ENDPOINT_URL
+                and settings.SECONDARY_R2_ACCESS_KEY_ID
+                and settings.SECONDARY_R2_SECRET_ACCESS_KEY
+                and settings.SECONDARY_R2_BUCKET_NAME
+            )
+
+            def _limits_exceeded(
+                lim: Optional[dict], using_secondary: bool
+            ) -> tuple[bool, str, bool]:
                 try:
                     if not lim:
-                        return (False, "")
+                        return (False, "", False)
                     near_r2 = bool(lim.get('r2', {}).get('nearLimit'))
                     near_db = bool(lim.get('db', {}).get('nearLimit'))
-                    if near_r2 or near_db:
-                        reason = "R2 near limit" if near_r2 else "DB near limit"
-                        return (True, reason)
+                    if near_db:
+                        return (True, "DB near limit", False)
+                    if near_r2:
+                        if using_secondary:
+                            # Primary can remain full; continue on secondary.
+                            return (False, "", False)
+                        if secondary_r2_configured:
+                            return (
+                                False,
+                                "Primary R2 near limit; switching to secondary",
+                                True,
+                            )
+                        return (True, "R2 near limit", False)
                 except Exception:
                     pass
-                return (False, "")
+                return (False, "", False)
 
             # Avoid hammering the CMS /limits endpoint (it lists the entire R2 bucket).
             # Default: check every 25 items or every 60s, whichever comes first.
@@ -1427,7 +1446,32 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                             cached_limits = limits
                             last_capacity_check_ts = now_ts
 
-                        exceeded, reason = _limits_exceeded(limits)
+                        exceeded, reason, should_switch_secondary = _limits_exceeded(
+                            limits, bool(getattr(storage, "using_secondary", False))
+                        )
+                        if should_switch_secondary and not bool(
+                            getattr(storage, "using_secondary", False)
+                        ):
+                            try:
+                                await storage.switch_to_secondary()
+                                switch_msg = (
+                                    "Capacity guard: switched uploads to secondary R2."
+                                )
+                                print(f"[CAPACITY] {switch_msg}")
+                                await _send_simple_log_to_cms(
+                                    run_id,
+                                    {
+                                        "type": "CAPACITY",
+                                        "status": "pending",
+                                        "message": switch_msg,
+                                    },
+                                )
+                            except Exception as switch_err:
+                                exceeded = True
+                                reason = (
+                                    "R2 near limit and secondary switch failed: "
+                                    f"{switch_err}"
+                                )
                         if exceeded:
                             print(f"[CAPACITY] {reason}; stopping run to avoid overage")
                             await _send_simple_log_to_cms(run_id, {

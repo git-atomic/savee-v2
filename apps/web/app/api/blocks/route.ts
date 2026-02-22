@@ -4,8 +4,8 @@ import { dedupeBlocksByStableKey } from "@/lib/block-dedupe";
 // Force dynamic rendering - prevent Next.js from caching this route
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-const EDGE_CACHE_SECONDS = 45;
-const EDGE_STALE_SECONDS = 300;
+const EDGE_CACHE_SECONDS = 5;
+const EDGE_STALE_SECONDS = 20;
 
 // Server-side CMS base URL. This should always be the Payload CMS origin,
 // not the frontend, so we only use CMS_URL here.
@@ -21,9 +21,7 @@ export async function GET(req: NextRequest) {
     const responseCacheControl = shouldUseEdgeCache
       ? `public, s-maxage=${EDGE_CACHE_SECONDS}, stale-while-revalidate=${EDGE_STALE_SECONDS}`
       : "private, no-cache, no-store, must-revalidate";
-    const upstreamCacheMode: RequestCache = shouldUseEdgeCache
-      ? "force-cache"
-      : "no-store";
+    const upstreamCacheMode: RequestCache = "no-store";
 
     // Forward all query params to CMS
     const cmsParams = new URLSearchParams();
@@ -44,9 +42,7 @@ export async function GET(req: NextRequest) {
             Accept: "application/json",
           },
           cache: upstreamCacheMode,
-          next: shouldUseEdgeCache
-            ? { revalidate: EDGE_CACHE_SECONDS }
-            : { revalidate: 0 },
+          next: { revalidate: 0 },
         }
       );
 

@@ -10,6 +10,9 @@ export interface Block {
   thumbnail_url?: string | null;
   r2_key?: string | null;
   saved_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  sort_ts?: string | null;
   status: "pending" | "fetched" | "scraped" | "uploaded" | "error";
   color_hexes?: string[] | null;
   colors?: Array<{ r: number; g: number; b: number }> | null;

@@ -120,22 +120,20 @@ export function Navigation() {
           overflow: "visible", // Ensure popover isn't clipped
         }}
       >
-        <div
-          className="relative flex items-center"
-          style={{ height: "var(--nav-height)", overflow: "visible" }}
-        >
+        <div className="relative" style={{ minHeight: "var(--nav-height)" }}>
           {/* Solid background - always opaque */}
           <div
-            className="absolute inset-0 h-full w-full"
+            className="absolute inset-0 w-full"
             style={{
               backgroundColor: "var(--background)",
             }}
           />
 
-          {/* Navigation content */}
+          {/* Desktop Navigation */}
           <div
-            className="relative flex items-center justify-between w-full"
+            className="relative hidden md:flex items-center justify-between w-full"
             style={{
+              height: "var(--nav-height)",
               paddingLeft: "var(--page-margin)",
               paddingRight: "var(--page-margin)",
               overflow: "visible",
@@ -258,6 +256,126 @@ export function Navigation() {
                   </div>
                 </PopoverContent>
               </Popover>
+            </div>
+          </div>
+
+          {/* Mobile Navigation */}
+          <div
+            className="relative flex md:hidden flex-col gap-2 py-2"
+            style={{
+              paddingLeft: "var(--page-margin)",
+              paddingRight: "var(--page-margin)",
+            }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <ul className="flex shrink-0 items-center gap-x-4">
+                {navItems.map((item) => {
+                  const isActive = pathname === item.href;
+                  return (
+                    <li key={`mobile-${item.href}`} className="relative flex items-center">
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          "text-sm font-medium leading-none transition-colors duration-200",
+                          "text-muted-foreground hover:text-foreground",
+                          isActive && "text-foreground"
+                        )}
+                      >
+                        {item.label}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <div className="flex items-center gap-1.5">
+                <ThemeToggle />
+                <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      aria-label="Layout settings"
+                    >
+                      <Settings className="size-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
+                    side="bottom"
+                    sideOffset={8}
+                    className="w-[min(92vw,22rem)]"
+                    style={{ zIndex: 101 }}
+                  >
+                    <div className="space-y-6">
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Sort</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSortBy("recent")}
+                            className={cn(
+                              "rounded-md border px-3 py-2 text-sm transition-colors",
+                              sortBy === "recent"
+                                ? "border-foreground/30 bg-accent text-foreground"
+                                : "border-border bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                            )}
+                          >
+                            Recent
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSortBy("oldest")}
+                            className={cn(
+                              "rounded-md border px-3 py-2 text-sm transition-colors",
+                              sortBy === "oldest"
+                                ? "border-foreground/30 bg-accent text-foreground"
+                                : "border-border bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                            )}
+                          >
+                            Oldest
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-sm font-medium">Columns</label>
+                          <span className="text-sm text-muted-foreground">
+                            {columns}
+                          </span>
+                        </div>
+                        <Slider
+                          value={[columns]}
+                          onValueChange={(value) => setColumns(value[0])}
+                          min={1}
+                          max={10}
+                          step={1}
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-sm font-medium">Padding</label>
+                          <span className="text-sm text-muted-foreground">
+                            {gap}px
+                          </span>
+                        </div>
+                        <Slider
+                          value={[gap]}
+                          onValueChange={(value) => setGap(value[0])}
+                          min={0}
+                          max={64}
+                          step={4}
+                        />
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+
+            <div className="w-full pb-1">
+              <SearchPopover ref={searchPopoverRef} />
             </div>
           </div>
         </div>

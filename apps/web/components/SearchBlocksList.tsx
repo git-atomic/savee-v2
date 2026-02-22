@@ -16,6 +16,7 @@ import {
   dedupeBlocksByStableKey,
   mergeUniqueBlocks,
 } from "@/lib/block-dedupe";
+import { restoreScrollPosition, saveScrollPosition } from "@/lib/scroll-state";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
@@ -202,6 +203,8 @@ export function SearchBlocksList() {
 
     const controller = new AbortController();
     const normalizedQuery = query.trim();
+    const scrollKey = `search:${normalizedQuery.toLowerCase()}`;
+    restoreScrollPosition(scrollKey);
     const cached = searchCache.get(normalizedQuery.toLowerCase());
     if (cached) {
       setBlocks(cached.blocks);
@@ -217,6 +220,7 @@ export function SearchBlocksList() {
     loadBlocks(normalizedQuery, null, controller.signal);
 
     return () => {
+      saveScrollPosition(scrollKey);
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;

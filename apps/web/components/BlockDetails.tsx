@@ -25,6 +25,7 @@ interface BlockDetailsProps {
 export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const scrollLockYRef = useRef(0);
 
   const isVideo = block.media_type === "video" || !!block.video_url;
   const [mediaUrl, setMediaUrl] = useState(() =>
@@ -36,10 +37,10 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   const navigateTo = useCallback(
     (href: string) => {
       if (isModal) {
-        router.replace(href);
+        router.push(href, { scroll: false });
         return;
       }
-      router.push(href);
+      router.push(href, { scroll: false });
     },
     [isModal, router]
   );
@@ -53,7 +54,7 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
       router.replace("/");
       return;
     }
-    router.push("/");
+    router.push("/", { scroll: false });
   }, [isModal, router]);
 
   const handleTagClick = useCallback(
@@ -161,9 +162,19 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   // Prevent body scroll when modal is open
   useEffect(() => {
     if (isModal) {
-      document.body.style.overflow = "hidden";
+      scrollLockYRef.current = window.scrollY;
+      document.body.style.position = "fixed";
+      document.body.style.top = `-${scrollLockYRef.current}px`;
+      document.body.style.left = "0";
+      document.body.style.right = "0";
+      document.body.style.width = "100%";
       return () => {
-        document.body.style.overflow = "";
+        document.body.style.position = "";
+        document.body.style.top = "";
+        document.body.style.left = "";
+        document.body.style.right = "";
+        document.body.style.width = "";
+        window.scrollTo(0, scrollLockYRef.current);
       };
     }
   }, [isModal]);
@@ -287,7 +298,7 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
         </div>
 
         {/* Media Container */}
-        <div className="relative w-full h-full max-h-full flex items-center justify-center max-w-6xl">
+        <div className="relative w-full flex-1 max-h-[calc(100dvh-3.5rem)] md:max-h-[calc(100dvh-5rem)] flex items-center justify-center max-w-6xl">
           {isVideo ? (
             <video
               ref={videoRef}
@@ -308,6 +319,53 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
               onError={handleImageError}
             />
           )}
+        </div>
+
+        {/* Mobile Info Panel */}
+        <div className="mt-3 w-full max-w-6xl rounded-xl border border-white/10 bg-black/50 p-3 backdrop-blur-md lg:hidden">
+          <div className="flex flex-col gap-3">
+            <h1 className="text-base font-semibold leading-tight text-white">
+              {block.title || block.og_title || "Untitled"}
+            </h1>
+            <div className="flex items-center gap-3 text-sm">
+              {saveeDomain && (
+                <a
+                  href={block.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-muted-foreground hover:text-white transition-colors"
+                >
+                  <span>link</span>
+                  <ExternalLink size={12} className="opacity-60" />
+                </a>
+              )}
+              {apiSourceUrl && (
+                <a
+                  href={apiSourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-muted-foreground hover:text-white transition-colors"
+                >
+                  <span>source</span>
+                  <ExternalLink size={12} className="opacity-60" />
+                </a>
+              )}
+            </div>
+            {block.ai_tags && block.ai_tags.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {block.ai_tags.slice(0, 10).map((tag) => (
+                  <button
+                    key={`mobile-tag-${tag}`}
+                    type="button"
+                    onClick={() => handleTagClick(tag)}
+                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/90"
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

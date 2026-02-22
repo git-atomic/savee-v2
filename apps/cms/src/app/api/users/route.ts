@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
     );
     const qParam = url.searchParams.get("q");
     const q = typeof qParam === "string" ? qParam : undefined;
-    const cursor = url.searchParams.get("cursor") || undefined; // base64 { blockCount:number, id:number }
+    const cursor = url.searchParams.get("cursor") || undefined; // base64 { blockCount:number, savesCount:number, id:number }
 
     const where: string[] = [];
     const params: any[] = [];
@@ -37,15 +37,24 @@ export async function GET(req: NextRequest) {
     if (cursor) {
       try {
         const c = JSON.parse(Buffer.from(cursor, "base64").toString("utf-8"));
-        if (c && typeof c.blockCount === "number" && typeof c.id === "number") {
+        if (
+          c &&
+          typeof c.blockCount === "number" &&
+          typeof c.savesCount === "number" &&
+          typeof c.id === "number"
+        ) {
           params.push(Number(c.blockCount));
+          params.push(Number(c.savesCount));
           params.push(Number(c.id));
           where.push(
             `((SELECT COUNT(*)::int FROM user_blocks ub WHERE ub.user_id = su.id) < $${
-              params.length - 1
+              params.length - 2
             } OR ((SELECT COUNT(*)::int FROM user_blocks ub WHERE ub.user_id = su.id) = $${
-              params.length - 1
-            } AND su.id < $${params.length}))`
+              params.length - 2
+            } AND COALESCE(su.saves_count, 0) < $${params.length - 1}) OR ((SELECT COUNT(*)::int FROM user_blocks ub WHERE ub.user_id = su.id) = $${
+              params.length - 2
+            } AND COALESCE(su.saves_count, 0) = $${params.length - 1}
+            AND su.id < $${params.length}))`
           );
         }
       } catch {}
@@ -100,7 +109,11 @@ export async function GET(req: NextRequest) {
       if (last) {
         try {
           nextCursor = Buffer.from(
-            JSON.stringify({ blockCount: last.block_count || 0, id: last.id })
+            JSON.stringify({
+              blockCount: last.block_count || 0,
+              savesCount: Number(last.saves_count || 0),
+              id: last.id,
+            })
           ).toString("base64");
         } catch {}
       }
