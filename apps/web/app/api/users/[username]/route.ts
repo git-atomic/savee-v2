@@ -55,8 +55,13 @@ export async function GET(
       const data = await response.json();
 
       // Find exact username match (case-insensitive)
-      const user = data.users?.find(
-        (u: any) => u.username.toLowerCase() === username.toLowerCase()
+      const users = Array.isArray(data?.users)
+        ? (data.users as Array<{ username?: string }>)
+        : [];
+      const user = users.find(
+        (u) =>
+          typeof u.username === "string" &&
+          u.username.toLowerCase() === username.toLowerCase()
       );
 
       if (!user) {

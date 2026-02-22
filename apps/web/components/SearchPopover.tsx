@@ -87,44 +87,61 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
   const [autocompleteResults, setAutocompleteResults] = useState<Block[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  const [anchorElement, setAnchorElement] = useState<HTMLDivElement | null>(
+    null
+  );
   const inputRef = useRef<HTMLInputElement>(null);
   const anchorElementRef = useRef<HTMLDivElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const focusTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  const resetTransientState = useCallback(() => {
+    setAutocompleteResults([]);
+    setIsSearching(false);
+    setColorPickerOpen(false);
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+      debounceTimeoutRef.current = null;
+    }
+    if (abortControllerRef.current) {
+      safeAbort(abortControllerRef.current);
+      abortControllerRef.current = null;
+    }
+  }, []);
+
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) {
+        resetTransientState();
+      }
+      setOpen(nextOpen);
+    },
+    [resetTransientState]
+  );
+
   useImperativeHandle(ref, () => ({
-    close: () => setOpen(false),
-  }));
+    close: () => handleOpenChange(false),
+  }), [handleOpenChange]);
 
   const handleSearch = useCallback(
     (searchQuery: string) => {
       if (!searchQuery.trim()) return;
       saveRecentSearch(searchQuery.trim());
       setRecentSearches(getRecentSearches());
-      setOpen(false);
+      handleOpenChange(false);
       router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
     },
-    [router]
+    [router, handleOpenChange]
   );
 
   const setSearchAnchorRef = useCallback((el: HTMLDivElement | null) => {
     anchorElementRef.current = el;
+    setAnchorElement(el);
   }, []);
 
   useEffect(() => {
     if (!open) {
-      setAutocompleteResults([]);
-      setIsSearching(false);
-      setColorPickerOpen(false);
-      if (debounceTimeoutRef.current) {
-        clearTimeout(debounceTimeoutRef.current);
-        debounceTimeoutRef.current = null;
-      }
-      if (abortControllerRef.current) {
-        safeAbort(abortControllerRef.current);
-        abortControllerRef.current = null;
-      }
       return;
     }
 
@@ -156,8 +173,6 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      setIsSearching(true);
-
       // Debounce search
       debounceTimeoutRef.current = setTimeout(() => {
         searchBlocks(query, null, 8, controller.signal)
@@ -184,9 +199,6 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
             }
           });
       }, 300);
-    } else {
-      setAutocompleteResults([]);
-      setIsSearching(false);
     }
 
     // Cleanup function
@@ -204,6 +216,12 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
+    if (value.trim().length > 1) {
+      setIsSearching(true);
+    } else {
+      setAutocompleteResults([]);
+      setIsSearching(false);
+    }
     setQuery(value);
   };
 
@@ -211,18 +229,20 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
     if (e.key === "Enter" && query.trim()) {
       handleSearch(query);
     } else if (e.key === "Escape") {
-      setOpen(false);
+      handleOpenChange(false);
     }
   };
 
   const handleClear = () => {
     setQuery("");
+    setAutocompleteResults([]);
+    setIsSearching(false);
     inputRef.current?.focus();
   };
 
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverAnchor asChild>
           <div ref={setSearchAnchorRef} className="relative w-full">
             <div className="relative">
@@ -487,7 +507,7 @@ export const SearchPopover = forwardRef<SearchPopoverRef>((props, ref) => {
         <ColorPickerPopover
           open={colorPickerOpen}
           onOpenChange={setColorPickerOpen}
-          anchorElement={anchorElementRef.current}
+          anchorElement={anchorElement}
         />
       )}
     </>

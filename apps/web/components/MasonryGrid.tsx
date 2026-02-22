@@ -38,10 +38,10 @@ export function MasonryGrid({
   const internalColumns = useMasonryColumns();
   const columns = propColumns ?? internalColumns;
 
-  // Get aspect ratios for all blocks (cached and optimized)
+  // Get aspect ratios for all blocks.
   const aspectRatiosMap = useBlockAspectRatios(blocks);
 
-  // Convert aspect ratios map to Map for distribution
+  // Convert aspect ratios map to Map for distribution.
   const aspectRatios = useMemo(() => {
     const map = new Map<number, number>();
     Object.entries(aspectRatiosMap).forEach(([id, ratio]) => {
@@ -50,7 +50,7 @@ export function MasonryGrid({
     return map;
   }, [aspectRatiosMap]);
 
-  // Measure container width for accurate column width calculation
+  // Measure container width for accurate column width calculation.
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -84,61 +84,27 @@ export function MasonryGrid({
     };
   }, []);
 
-  // Calculate column width accounting for gaps to keep total width constant
-  // Formula: columnWidth = (containerWidth - gap * (columns - 1)) / columns
-  // This ensures the total width stays constant when gap changes
+  // Calculate column width accounting for gaps to keep total width constant.
   const columnWidth = useMemo(() => {
     if (containerWidth === 0 || columns === 0) return 0;
     const totalGapSpace = gap * (columns - 1);
     return (containerWidth - totalGapSpace) / columns;
   }, [containerWidth, columns, gap]);
 
-  // Track distributor version to reset cache when distributor changes
-  const distributorVersion = useRef(0);
-  const prevColumnWidth = useRef(columnWidth);
-  const prevGap = useRef(gap);
-  
-  // Create distributor with memoization - increment version when it changes
-  const distributor = useMemo(() => {
-    // Only increment if values actually changed (not on initial render)
-    if (prevColumnWidth.current !== columnWidth || prevGap.current !== gap) {
-      distributorVersion.current += 1;
-      prevColumnWidth.current = columnWidth;
-      prevGap.current = gap;
-    }
-    return createMasonryDistributor(columnWidth, gap);
-  }, [columnWidth, gap]);
+  const distributor = useMemo(
+    () => createMasonryDistributor(columnWidth, gap),
+    [columnWidth, gap]
+  );
 
-  // Stable block IDs string - only changes when block IDs actually change
-  // This prevents unnecessary recalculations when blocks array reference changes but IDs are the same
-  const blockIdsKey = useMemo(() => blocks.map(b => b.id).join(','), [blocks]);
   const blockIndexMap = useMemo(() => {
     const map = new Map<number, number>();
     blocks.forEach((block, index) => {
       map.set(block.id, index);
     });
     return map;
-  }, [blockIdsKey, blocks]);
-  
-  // Cache the last distribution to prevent recalculation when only aspect ratios change
-  // Include distributorVersion to invalidate cache when distributor changes
-  const cachedDistributionRef = useRef<{ 
-    blockIdsKey: string; 
-    distribution: ReturnType<typeof distributor>;
-    version: number;
-  } | null>(null);
-  
-  // Store aspect ratios in a ref so we can use the latest values without triggering recalculation
-  const aspectRatiosRef = useRef(aspectRatios);
-  useEffect(() => {
-    aspectRatiosRef.current = aspectRatios;
-  }, [aspectRatios]);
-  
-  // Distribute blocks to columns using height-balanced algorithm
-  // CRITICAL FIX: 
-  // 1. Only recalculate when block IDs change OR distributor changes
-  // 2. Reset cache when distributor version changes to prevent stale data
-  // 3. Don't render until mounted to prevent SSR/hydration mismatches
+  }, [blocks]);
+
+  // Distribute blocks to columns using height-balanced algorithm.
   const columnDistribution = useMemo(() => {
     if (blocks.length === 0 || containerWidth === 0) {
       return {
@@ -146,29 +112,8 @@ export function MasonryGrid({
         columnHeights: Array.from({ length: columns }, () => 0),
       };
     }
-
-    // Check if we can use cached distribution
-    // Cache is valid only if:
-    // 1. Block IDs haven't changed
-    // 2. Distributor version hasn't changed
-    const cacheValid = 
-      cachedDistributionRef.current?.blockIdsKey === blockIdsKey && 
-      cachedDistributionRef.current?.blockIdsKey !== '' &&
-      cachedDistributionRef.current?.version === distributorVersion.current;
-    
-    if (cacheValid) {
-      return cachedDistributionRef.current!.distribution;
-    }
-
-    // Recalculate distribution
-    const result = distributor(blocks, aspectRatiosRef.current, columns);
-    cachedDistributionRef.current = { 
-      blockIdsKey, 
-      distribution: result,
-      version: distributorVersion.current
-    };
-    return result;
-  }, [blockIdsKey, blocks, columns, containerWidth, distributor]);
+    return distributor(blocks, aspectRatios, columns);
+  }, [blocks, columns, containerWidth, distributor, aspectRatios]);
 
   // Optimized load more handler
   const handleLoadMore = useCallback(() => {
@@ -239,7 +184,8 @@ export function MasonryGrid({
           >
             {colBlocks.map((block) => {
               // Calculate global index for priority determination
-              const globalIndex = blockIndexMap.get(block.id) ?? Number.MAX_SAFE_INTEGER;
+              const globalIndex =
+                blockIndexMap.get(block.id) ?? Number.MAX_SAFE_INTEGER;
               const isPriority = globalIndex < priorityCount;
 
               return (

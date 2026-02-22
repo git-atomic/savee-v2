@@ -19,7 +19,7 @@ export interface Block {
   ai_tags?: string[] | null;
   saved_by_usernames?: string | null;
   links?: Array<{ url: string; title: string }> | null;
-  metadata?: any | null;
+  metadata?: Record<string, unknown> | null;
   og_title?: string | null;
   og_description?: string | null;
   og_image_url?: string | null;

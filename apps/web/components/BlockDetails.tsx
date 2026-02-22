@@ -26,11 +26,13 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
   const router = useRouter();
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrollLockYRef = useRef(0);
+  const initialMediaUrl = useMemo(
+    () => getBlockMediaUrl(block, { preferProxy: false }),
+    [block]
+  );
 
   const isVideo = block.media_type === "video" || !!block.video_url;
-  const [mediaUrl, setMediaUrl] = useState(() =>
-    getBlockMediaUrl(block, { preferProxy: false })
-  );
+  const [mediaUrl, setMediaUrl] = useState(() => initialMediaUrl);
   const videoUrl = getBlockVideoUrl(block);
   const [triedProxyFallback, setTriedProxyFallback] = useState(false);
 
@@ -178,11 +180,6 @@ export function BlockDetails({ block, isModal = false }: BlockDetailsProps) {
       };
     }
   }, [isModal]);
-
-  useEffect(() => {
-    setMediaUrl(getBlockMediaUrl(block, { preferProxy: false }));
-    setTriedProxyFallback(false);
-  }, [block.id, block.image_url, block.thumbnail_url, block.r2_key, block.video_url]);
 
   const handleImageError = useCallback(() => {
     if (!triedProxyFallback && mediaUrl && /^https?:\/\//i.test(mediaUrl)) {

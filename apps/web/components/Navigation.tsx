@@ -52,9 +52,8 @@ export function Navigation() {
     if (isBlockDetail) {
       return;
     }
-    // Set initial scroll position and visibility after hydration
+    // Set initial scroll position after hydration
     lastScrollY.current = window.scrollY;
-    setVisibleIfChanged(window.scrollY < scrollThreshold);
 
     // Throttle scroll handler using requestAnimationFrame for smooth performance
     const handleScroll = () => {
@@ -91,6 +90,8 @@ export function Navigation() {
       });
     };
 
+    // Trigger once after mount to sync visibility.
+    handleScroll();
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       window.removeEventListener("scroll", handleScroll);

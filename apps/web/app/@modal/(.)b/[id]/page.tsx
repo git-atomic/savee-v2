@@ -5,34 +5,34 @@ interface PageProps {
   params: Promise<{ id: string }>;
 }
 
-export default async function BlockModalPage({ params }: PageProps) {
-  const { id } = await params;
-
+async function fetchBlock(id: string) {
+  const cmsUrl = process.env.CMS_URL || "http://localhost:3000";
   try {
-    const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
-    const res = await fetch(`${CMS_URL}/api/blocks?externalId=${id}&limit=1`, {
+    const res = await fetch(`${cmsUrl}/api/blocks?externalId=${id}&limit=1`, {
       cache: "no-store",
     });
-
-    if (!res.ok) {
-      return notFound();
-    }
-
+    if (!res.ok) return null;
     const data = await res.json();
-
-    if (!data.success || !data.blocks || data.blocks.length === 0) {
-      return notFound();
+    if (!data.success || !Array.isArray(data.blocks) || data.blocks.length === 0) {
+      return null;
     }
-
-    const block = data.blocks[0];
-
-    return (
-      <div className="fixed inset-0 z-50 flex h-screen w-full bg-background">
-        <BlockDetails block={block} isModal={true} />
-      </div>
-    );
+    return data.blocks[0];
   } catch (error) {
     console.error("Error fetching block:", error);
+    return null;
+  }
+}
+
+export default async function BlockModalPage({ params }: PageProps) {
+  const { id } = await params;
+  const block = await fetchBlock(id);
+  if (!block) {
     return notFound();
   }
+
+  return (
+    <div className="fixed inset-0 z-50 flex h-screen w-full bg-background">
+      <BlockDetails key={block.external_id || block.id} block={block} isModal={true} />
+    </div>
+  );
 }

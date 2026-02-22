@@ -94,29 +94,19 @@ function BlockCardComponent({
 }: BlockCardProps) {
   const router = useRouter();
   const wasPreviouslyLoaded = loadedBlocksCache.has(block.id);
-  const imageCandidates = useMemo(() => {
-    const initial = getBlockMediaUrl(block, { preferProxy: false });
-    const r2Fallback = block.r2_key
-      ? `/api/media?key=${encodeURIComponent(block.r2_key)}`
-      : null;
-    const remoteFallbacks = dedupeUrlCandidates([block.thumbnail_url, block.image_url])
-      .filter(isHttpUrl)
-      .map((url) => getRemoteMediaProxyUrl(url));
-
-    return dedupeUrlCandidates([
-      initial,
-      block.thumbnail_url,
-      block.image_url,
-      r2Fallback,
-      ...remoteFallbacks,
-    ]);
-  }, [
-    block.id,
-    block.media_type,
-    block.video_url,
+  const initial = getBlockMediaUrl(block, { preferProxy: false });
+  const r2Fallback = block.r2_key
+    ? `/api/media?key=${encodeURIComponent(block.r2_key)}`
+    : null;
+  const remoteFallbacks = dedupeUrlCandidates([block.thumbnail_url, block.image_url])
+    .filter(isHttpUrl)
+    .map((url) => getRemoteMediaProxyUrl(url));
+  const imageCandidates = dedupeUrlCandidates([
+    initial,
     block.thumbnail_url,
     block.image_url,
-    block.r2_key,
+    r2Fallback,
+    ...remoteFallbacks,
   ]);
 
   // State management
@@ -161,21 +151,6 @@ function BlockCardComponent({
       shouldLoadRef.current = true;
     }
   }, [shouldLoad]);
-
-  // Reset media state when card data changes.
-  useEffect(() => {
-    failedImageSourcesRef.current.clear();
-    if (imageRevealTimeoutRef.current) {
-      clearTimeout(imageRevealTimeoutRef.current);
-      imageRevealTimeoutRef.current = null;
-    }
-
-    setImageSrc(imageCandidates[0] || "");
-    setIsLoaded(wasPreviouslyLoaded);
-    setIsSharp(wasPreviouslyLoaded);
-    setIsVideoLoaded(wasPreviouslyLoaded);
-    setHasVideoPlayed(false);
-  }, [block.id, imageCandidates, wasPreviouslyLoaded]);
 
   // Intersection observer for lazy loading
   const handleIntersection = useCallback(
@@ -274,7 +249,12 @@ function BlockCardComponent({
     const video = videoRef.current;
 
     const handlePlaying = () => setIsVideoPlaying(true);
-    const handlePause = () => setIsVideoPlaying(false);
+    const handlePause = () => {
+      setIsVideoPlaying(false);
+      if (video.currentTime > 0) {
+        setHasVideoPlayed(true);
+      }
+    };
     const handleEnded = () => setIsVideoPlaying(false);
 
     video.addEventListener("playing", handlePlaying, { passive: true });
@@ -362,14 +342,9 @@ function BlockCardComponent({
         if (!video.paused) {
           videoPositionRef.current = video.currentTime;
           video.pause();
-          // Mark that video has been played so we show paused frame instead of thumbnail
-          if (video.currentTime > 0) {
-            setHasVideoPlayed(true);
-          }
         } else if (video.currentTime > 0) {
           // Save position even if already paused (in case it changed)
           videoPositionRef.current = video.currentTime;
-          setHasVideoPlayed(true);
         }
         // Ensure video stays at current position and doesn't reset
         if (videoPositionRef.current > 0 && video.duration > 0) {

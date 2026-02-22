@@ -247,7 +247,7 @@ export function UserProfile({ username }: UserProfileProps) {
       }
       safeAbort(controller);
     };
-  }, [user, loadBlocks]);
+  }, [user, loadBlocks, username]);
 
   const handleLoadMore = useCallback(() => {
     if (

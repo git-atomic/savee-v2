@@ -45,7 +45,7 @@ export function BlocksList(
   const abortControllerRef = useRef<AbortController | null>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isLoadingRef = useRef(false); // Guard against concurrent loads
-  const lastRequestedCursorRef = useRef<string | null>(undefined as any); // Track cursors being loaded
+  const lastRequestedCursorRef = useRef<string | null | undefined>(undefined); // Track cursors being loaded
   
   const hasCachedStateRef = useRef(Boolean(cached));
 
@@ -112,7 +112,7 @@ export function BlocksList(
           return;
 
         // Reset the last requested cursor on error so we can retry
-        lastRequestedCursorRef.current = undefined as any;
+        lastRequestedCursorRef.current = undefined;
 
         const errorMessage =
           err instanceof Error ? err.message : "Failed to load blocks";
@@ -152,7 +152,7 @@ export function BlocksList(
     abortControllerRef.current = controller;
     restoreScrollPosition(cacheKey);
 
-    lastRequestedCursorRef.current = undefined as any;
+    lastRequestedCursorRef.current = undefined;
     if (!hasCachedStateRef.current) {
       loadBlocks(null, controller.signal);
     } else {
