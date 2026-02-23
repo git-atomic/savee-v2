@@ -1384,20 +1384,49 @@ async def run_scraper_for_url(url: str, max_items: Optional[int] = None, provide
                 try:
                     if not lim:
                         return (False, "", False)
-                    near_r2 = bool(lim.get('r2', {}).get('nearLimit'))
+                    r2_limits = lim.get('r2', {}) or {}
+                    near_r2 = bool(r2_limits.get('nearLimit'))
+                    primary_near_r2 = bool(r2_limits.get('primaryNearLimit', near_r2))
+                    secondary_near_r2 = bool(r2_limits.get('secondaryNearLimit'))
+                    can_failover_to_secondary = bool(
+                        r2_limits.get('canFailoverToSecondary')
+                    )
                     near_db = bool(lim.get('db', {}).get('nearLimit'))
                     if near_db:
                         return (True, "DB near limit", False)
-                    if near_r2:
-                        if using_secondary:
-                            # Primary can remain full; continue on secondary.
-                            return (False, "", False)
+
+                    if using_secondary:
+                        # Once failover is active, only stop if secondary itself is near limit.
+                        if secondary_near_r2:
+                            return (True, "Secondary R2 near limit", False)
+                        # Legacy /limits payloads do not include secondary-specific fields.
+                        # In that case, keep running on secondary.
+                        return (False, "", False)
+
+                    if primary_near_r2:
+                        if can_failover_to_secondary and secondary_r2_configured:
+                            return (
+                                False,
+                                "Primary R2 near limit; switching to secondary",
+                                True,
+                            )
+                        if can_failover_to_secondary and not secondary_r2_configured:
+                            return (
+                                True,
+                                "Primary R2 near limit; secondary is available in CMS but missing on worker",
+                                False,
+                            )
+                        # Backward compatibility: older /limits payloads only had nearLimit.
                         if secondary_r2_configured:
                             return (
                                 False,
                                 "Primary R2 near limit; switching to secondary",
                                 True,
                             )
+                        return (True, "R2 near limit", False)
+
+                    # If aggregate nearLimit is true without a primary flag, treat as hard stop.
+                    if near_r2:
                         return (True, "R2 near limit", False)
                 except Exception:
                     pass

@@ -451,7 +451,8 @@ export async function POST(request: NextRequest) {
             const limits = await limitsRes.json();
             const nearR2 = !!limits?.r2?.nearLimit;
             const nearDb = !!limits?.db?.nearLimit;
-            if ((nearR2 || nearDb) && !force) {
+            const canFailoverToSecondary = !!limits?.r2?.canFailoverToSecondary;
+            if ((nearDb || (nearR2 && !canFailoverToSecondary)) && !force) {
               return NextResponse.json(
                 {
                   success: false,
