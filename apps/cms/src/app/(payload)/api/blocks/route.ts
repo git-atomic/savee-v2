@@ -202,15 +202,22 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // NEW APPROACH: Use EXISTS to find blocks that INCLUDE the requested origin
+    // Prefer block_sources for multi-origin fidelity, but fall back to the
+    // block's primary source for legacy rows where block_sources may be sparse.
     let originFilter = "";
     if (origin === "home" || origin === "pop") {
       params.push(origin);
       originFilter = `
-        AND EXISTS (
-          SELECT 1 FROM block_sources bs_filter
-          JOIN sources s_filter ON s_filter.id = bs_filter.source_id
-          WHERE bs_filter.block_id = b.id AND s_filter.source_type::text = $${params.length}
+        AND (
+          EXISTS (
+            SELECT 1 FROM block_sources bs_filter
+            JOIN sources s_filter ON s_filter.id = bs_filter.source_id
+            WHERE bs_filter.block_id = b.id AND s_filter.source_type::text = $${params.length}
+          )
+          OR EXISTS (
+            SELECT 1 FROM sources s_primary
+            WHERE s_primary.id = b.source_id AND s_primary.source_type::text = $${params.length}
+          )
         )`;
     } else if (origin === "user") {
       // When username provided -> specific user; otherwise any user origin
@@ -218,20 +225,35 @@ export async function GET(req: NextRequest) {
       if (username) {
         params.push(username);
         originFilter = `
-          AND EXISTS (
-            SELECT 1 FROM block_sources bs_filter
-            JOIN sources s_filter ON s_filter.id = bs_filter.source_id
-            WHERE bs_filter.block_id = b.id 
-            AND s_filter.source_type::text = $${params.length - 1}
-            AND s_filter.username = $${params.length}
+          AND (
+            EXISTS (
+              SELECT 1 FROM block_sources bs_filter
+              JOIN sources s_filter ON s_filter.id = bs_filter.source_id
+              WHERE bs_filter.block_id = b.id
+              AND s_filter.source_type::text = $${params.length - 1}
+              AND s_filter.username = $${params.length}
+            )
+            OR EXISTS (
+              SELECT 1 FROM sources s_primary
+              WHERE s_primary.id = b.source_id
+                AND s_primary.source_type::text = $${params.length - 1}
+                AND s_primary.username = $${params.length}
+            )
           )`;
       } else {
         originFilter = `
-          AND EXISTS (
-            SELECT 1 FROM block_sources bs_filter
-            JOIN sources s_filter ON s_filter.id = bs_filter.source_id
-            WHERE bs_filter.block_id = b.id 
-            AND s_filter.source_type::text = $${params.length}
+          AND (
+            EXISTS (
+              SELECT 1 FROM block_sources bs_filter
+              JOIN sources s_filter ON s_filter.id = bs_filter.source_id
+              WHERE bs_filter.block_id = b.id
+              AND s_filter.source_type::text = $${params.length}
+            )
+            OR EXISTS (
+              SELECT 1 FROM sources s_primary
+              WHERE s_primary.id = b.source_id
+                AND s_primary.source_type::text = $${params.length}
+            )
           )`;
       }
     }
@@ -239,14 +261,22 @@ export async function GET(req: NextRequest) {
     // Additional filters
     if (sourceId) {
       params.push(parseInt(sourceId));
-      originFilter += ` AND EXISTS (
-        SELECT 1 FROM block_sources bs_src WHERE bs_src.block_id = b.id AND bs_src.source_id = $${params.length}
+      originFilter += ` AND (
+        EXISTS (
+          SELECT 1 FROM block_sources bs_src
+          WHERE bs_src.block_id = b.id AND bs_src.source_id = $${params.length}
+        )
+        OR b.source_id = $${params.length}
       )`;
     }
     if (runId) {
       params.push(parseInt(runId));
-      originFilter += ` AND EXISTS (
-        SELECT 1 FROM block_sources bs_run WHERE bs_run.block_id = b.id AND bs_run.run_id = $${params.length}
+      originFilter += ` AND (
+        EXISTS (
+          SELECT 1 FROM block_sources bs_run
+          WHERE bs_run.block_id = b.id AND bs_run.run_id = $${params.length}
+        )
+        OR b.run_id = $${params.length}
       )`;
     }
 

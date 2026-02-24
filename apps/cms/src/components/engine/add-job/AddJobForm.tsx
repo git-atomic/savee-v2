@@ -12,6 +12,28 @@ import {
   type SourceType,
 } from "@/lib/url-utils";
 
+function getCapacityDescription(
+  details: any,
+  fallback: string
+): string {
+  const reasons: string[] = [];
+  const dbNear = Boolean(details?.db?.nearLimit);
+  const r2Near = Boolean(details?.r2?.nearLimit);
+  const primaryR2Near = Boolean(details?.r2?.primaryNearLimit);
+  const canFailover = Boolean(details?.r2?.canFailoverToSecondary);
+
+  if (dbNear) reasons.push("DB is near soft limit");
+  if (r2Near || primaryR2Near) {
+    if (canFailover) {
+      reasons.push("Primary R2 is near soft limit, but secondary failover is available");
+    } else {
+      reasons.push("R2 is near soft limit and secondary failover is unavailable");
+    }
+  }
+
+  return reasons.length > 0 ? reasons.join(" | ") : fallback;
+}
+
 export function AddJobForm() {
   const [input, setInput] = useState("");
   const [sourceType, setSourceType] = useState<SourceType>("user");
@@ -122,8 +144,12 @@ export function AddJobForm() {
 
         // Handle capacity limit errors
         if (response.status === 429 && data.details) {
+          const capacityDescription = getCapacityDescription(
+            data.details,
+            data.message || errorMessage
+          );
           toast.error("Capacity Limit Reached", {
-            description: errorMessage,
+            description: capacityDescription,
           });
         } else {
           toast.error("Failed to Start Job", {

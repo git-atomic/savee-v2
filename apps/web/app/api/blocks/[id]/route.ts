@@ -2,6 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 
 const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
 
+function extractBlockFromResponse(data: any, id: string) {
+  const blocks = Array.isArray(data?.blocks)
+    ? data.blocks
+    : Array.isArray(data?.docs)
+      ? data.docs
+      : [];
+
+  if (!Array.isArray(blocks) || blocks.length === 0) return null;
+
+  const idLower = String(id).toLowerCase();
+  const matched =
+    blocks.find(
+      (block: any) => String(block?.external_id || "").toLowerCase() === idLower
+    ) ||
+    blocks.find((block: any) => String(block?.id || "") === String(id)) ||
+    null;
+
+  return matched;
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -24,9 +44,28 @@ export async function GET(
     }
 
     const data = await response.json();
-    
-    if (data.success && data.blocks && data.blocks.length > 0) {
-        return NextResponse.json(data.blocks[0]);
+    let block = extractBlockFromResponse(data, id);
+
+    // Payload docs-style fallback: custom `externalId` param is not supported there.
+    if (!block && Array.isArray(data?.docs)) {
+      const fallback = await fetch(
+        `${CMS_URL}/api/blocks?where[external_id][equals]=${encodeURIComponent(
+          id
+        )}&limit=1`,
+        {
+          headers: {
+            Accept: "application/json",
+          },
+        }
+      );
+      if (fallback.ok) {
+        const fallbackData = await fallback.json();
+        block = extractBlockFromResponse(fallbackData, id);
+      }
+    }
+
+    if (block) {
+      return NextResponse.json(block);
     }
 
     return NextResponse.json(

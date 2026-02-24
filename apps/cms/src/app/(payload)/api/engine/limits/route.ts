@@ -241,8 +241,17 @@ export async function GET(_req: NextRequest) {
       shouldProbeSecondary &&
       !secondary.error &&
       Number.isFinite(secondary.totalSizeBytes);
+    const secondaryProbeFailed =
+      secondaryConfigured && shouldProbeSecondary && Boolean(secondary.error);
+    const secondaryAtLimit =
+      secondaryConfigured && shouldProbeSecondary && secondary.nearLimit;
+    // Be optimistic when secondary is configured but health probing fails.
+    // Worker-side switch remains the source of truth and will stop if switch fails.
     const canFailoverToSecondary =
-      primary.nearLimit && secondaryHealthy && !secondary.nearLimit;
+      primary.nearLimit &&
+      secondaryConfigured &&
+      !secondaryAtLimit &&
+      !secondarySameAsPrimary;
     const r2NearLimit = primary.nearLimit && !canFailoverToSecondary;
 
     const totalObjects =
@@ -264,11 +273,13 @@ export async function GET(_req: NextRequest) {
         ? null
         : secondarySameAsPrimary
           ? "Secondary R2 target matches primary."
-          : shouldProbeSecondary && secondary.error
-            ? secondary.error
-            : shouldProbeSecondary && secondary.nearLimit
+          : secondaryAtLimit
               ? "Secondary R2 near limit."
-              : null;
+              : secondaryProbeFailed
+                ? "Secondary R2 health check failed; worker will attempt failover."
+                : shouldProbeSecondary && secondary.error
+                  ? secondary.error
+                  : null;
 
     return NextResponse.json({
       success: true,
@@ -282,7 +293,7 @@ export async function GET(_req: NextRequest) {
         secondaryNearLimit: secondaryHealthy ? secondary.nearLimit : null,
         canFailoverToSecondary,
         shouldSwitchToSecondary: primary.nearLimit && canFailoverToSecondary,
-        hasSecondary: secondaryHealthy,
+        hasSecondary: secondaryConfigured,
         secondaryConfigured,
         secondaryUnavailableReason,
         primary,

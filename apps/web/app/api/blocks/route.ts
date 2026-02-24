@@ -11,9 +11,52 @@ const EDGE_STALE_SECONDS = 20;
 // not the frontend, so we only use CMS_URL here.
 const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
 
+function parsePageCursor(cursor: string | null): number | null {
+  if (!cursor || !cursor.startsWith("page:")) return null;
+  const raw = cursor.slice("page:".length).trim();
+  const page = Number(raw);
+  if (!Number.isFinite(page) || page < 1) return null;
+  return Math.floor(page);
+}
+
+function normalizeBlocksResponseShape(data: any) {
+  if (data && Array.isArray(data.blocks)) {
+    const dedupedBlocks = dedupeBlocksByStableKey(data.blocks);
+    return {
+      ...data,
+      success: data.success ?? true,
+      blocks: dedupedBlocks,
+      nextCursor:
+        typeof data.nextCursor === "string" ? data.nextCursor : null,
+      count: dedupedBlocks.length,
+    };
+  }
+
+  // Payload collection response fallback:
+  // { docs, hasNextPage, nextPage, ... }
+  if (data && Array.isArray(data.docs)) {
+    const dedupedBlocks = dedupeBlocksByStableKey(data.docs);
+    const hasNextPage = Boolean(data.hasNextPage);
+    const nextPage =
+      typeof data.nextPage === "number" && Number.isFinite(data.nextPage)
+        ? data.nextPage
+        : null;
+    return {
+      success: true,
+      blocks: dedupedBlocks,
+      nextCursor:
+        hasNextPage && nextPage !== null ? `page:${nextPage}` : null,
+      count: dedupedBlocks.length,
+    };
+  }
+
+  return data;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
+    const pageCursor = parsePageCursor(searchParams.get("cursor"));
     const hasCursor = Boolean(searchParams.get("cursor"));
     const hasSearch = Boolean(searchParams.get("q"));
     const isUserFeed = Boolean(searchParams.get("username"));
@@ -26,8 +69,14 @@ export async function GET(req: NextRequest) {
     // Forward all query params to CMS
     const cmsParams = new URLSearchParams();
     searchParams.forEach((value, key) => {
+      // page:N cursor is a fallback cursor for Payload docs-style pagination.
+      // Do not forward it as a custom cursor to CMS.
+      if (pageCursor !== null && key === "cursor") return;
       cmsParams.set(key, value);
     });
+    if (pageCursor !== null) {
+      cmsParams.set("page", String(pageCursor));
+    }
 
     // Add timeout to prevent hanging requests
     const controller = new AbortController();
@@ -67,18 +116,7 @@ export async function GET(req: NextRequest) {
       }
 
       const data = await response.json();
-      const dedupedBlocks =
-        data && Array.isArray(data.blocks)
-          ? dedupeBlocksByStableKey(data.blocks)
-          : null;
-      const normalizedData =
-        dedupedBlocks !== null
-          ? {
-              ...data,
-              blocks: dedupedBlocks,
-              count: dedupedBlocks.length,
-            }
-          : data;
+      const normalizedData = normalizeBlocksResponseShape(data);
 
       // NO CACHING - prevents duplicate blocks from stale edge responses
       return NextResponse.json(normalizedData, {

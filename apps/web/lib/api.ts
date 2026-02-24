@@ -36,6 +36,9 @@ export async function fetchBlocks(
     }
 
     const data = (await response.json()) as BlocksResponse;
+    if ((data as any)?.success === false) {
+      throw new Error((data as any)?.error || "Failed to fetch blocks");
+    }
 
     const uniqueBlocks = dedupeBlocksByStableKey(data.blocks ?? []);
     return { ...data, blocks: uniqueBlocks };
@@ -258,6 +261,9 @@ export async function searchBlocks(
     }
 
     const data = (await response.json()) as BlocksResponse;
+    if ((data as any)?.success === false) {
+      throw new Error((data as any)?.error || "Failed to search blocks");
+    }
     return { ...data, blocks: dedupeBlocksByStableKey(data.blocks ?? []) };
   } catch (error) {
     throw error;
@@ -327,6 +333,9 @@ export async function fetchBlocksByUsername(
     }
 
     const data = (await response.json()) as BlocksResponse;
+    if ((data as any)?.success === false) {
+      throw new Error((data as any)?.error || "Failed to fetch blocks");
+    }
     return { ...data, blocks: dedupeBlocksByStableKey(data.blocks ?? []) };
   } catch (error) {
     throw error;

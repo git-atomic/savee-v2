@@ -53,15 +53,28 @@ export async function POST(request: NextRequest) {
         const nearR2 = !!limits?.r2?.nearLimit;
         const nearDb = !!limits?.db?.nearLimit;
         const canFailoverToSecondary = !!limits?.r2?.canFailoverToSecondary;
-        if ((nearDb || (nearR2 && !canFailoverToSecondary)) && !force) {
+        // Start-time hard block should only apply to DB capacity.
+        // R2 guard is enforced by the worker, which can fail over to secondary.
+        if (nearDb && !force) {
+          const capacityReasons: string[] = [];
+          if (nearDb) capacityReasons.push("DB near soft limit");
           return NextResponse.json(
             {
               success: false,
               error: "Capacity near limits",
+              message:
+                capacityReasons.length > 0
+                  ? capacityReasons.join("; ")
+                  : "Capacity near limits",
               details: { r2: limits?.r2, db: limits?.db },
               hint: "Pass force:true to override",
             },
             { status: 429 }
+          );
+        }
+        if (nearR2 && !canFailoverToSecondary) {
+          console.warn(
+            "[engine/run] R2 near soft limit and secondary failover unavailable; allowing run, worker will enforce capacity guard."
           );
         }
       }
