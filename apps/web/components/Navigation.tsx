@@ -24,11 +24,13 @@ export function Navigation() {
   
   // Always start with true to match server render, then update after hydration
   const [isVisible, setIsVisible] = useState(true);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [desktopSettingsOpen, setDesktopSettingsOpen] = useState(false);
+  const [mobileSettingsOpen, setMobileSettingsOpen] = useState(false);
   const rafRef = useRef<number | null>(null);
   const lastScrollY = useRef(0);
   const scrollThreshold = 10; // Minimum scroll distance to trigger hide/show
-  const searchPopoverRef = useRef<SearchPopoverRef>(null);
+  const desktopSearchPopoverRef = useRef<SearchPopoverRef>(null);
+  const mobileSearchPopoverRef = useRef<SearchPopoverRef>(null);
   const isVisibleRef = useRef(true);
   
   // Hide navigation when viewing block details
@@ -77,8 +79,10 @@ export function Navigation() {
           // Scrolling down: hide nav and close popovers
           if (scrollDelta > 0) {
             setVisibleIfChanged(false);
-            setSettingsOpen(false);
-            searchPopoverRef.current?.close();
+            setDesktopSettingsOpen(false);
+            setMobileSettingsOpen(false);
+            desktopSearchPopoverRef.current?.close();
+            mobileSearchPopoverRef.current?.close();
           }
           // Scrolling up: show nav
           else if (scrollDelta < 0) {
@@ -170,13 +174,21 @@ export function Navigation() {
 
             {/* Search in the middle */}
             <div className="absolute left-1/2 -translate-x-1/2 w-full max-w-2xl px-4">
-              <SearchPopover ref={searchPopoverRef} />
+              <SearchPopover ref={desktopSearchPopoverRef} />
             </div>
 
             <div className="flex items-center gap-1.5">
               <ThemeToggle />
               {/* Settings button */}
-              <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
+              <Popover
+                open={desktopSettingsOpen}
+                onOpenChange={(nextOpen) => {
+                  setDesktopSettingsOpen(nextOpen);
+                  if (nextOpen) {
+                    setMobileSettingsOpen(false);
+                  }
+                }}
+              >
                 <PopoverTrigger asChild>
                   <Button
                     variant="ghost"
@@ -291,7 +303,15 @@ export function Navigation() {
 
               <div className="flex items-center gap-1.5">
                 <ThemeToggle />
-                <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
+                <Popover
+                  open={mobileSettingsOpen}
+                  onOpenChange={(nextOpen) => {
+                    setMobileSettingsOpen(nextOpen);
+                    if (nextOpen) {
+                      setDesktopSettingsOpen(false);
+                    }
+                  }}
+                >
                   <PopoverTrigger asChild>
                     <Button
                       variant="ghost"
@@ -376,7 +396,7 @@ export function Navigation() {
             </div>
 
             <div className="w-full pb-1">
-              <SearchPopover ref={searchPopoverRef} />
+              <SearchPopover ref={mobileSearchPopoverRef} />
             </div>
           </div>
         </div>
