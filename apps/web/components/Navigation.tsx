@@ -173,8 +173,10 @@ export function Navigation() {
             </ul>
 
             {/* Search in the middle */}
-            <div className="absolute left-1/2 -translate-x-1/2 w-full max-w-2xl px-4">
-              <SearchPopover ref={desktopSearchPopoverRef} />
+            <div className="absolute left-1/2 -translate-x-1/2 w-full max-w-2xl px-4 pointer-events-none">
+              <div className="pointer-events-auto">
+                <SearchPopover ref={desktopSearchPopoverRef} />
+              </div>
             </div>
 
             <div className="flex items-center gap-1.5">
