@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-
-// Server-side CMS base URL. This should always point at the Payload CMS,
-// not the frontend, so we *only* look at CMS_URL here.
-const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
+import { resolveCmsBaseUrl } from "@/lib/server/cms-origin";
 
 function isPrivateOrLocalHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
@@ -49,8 +46,8 @@ async function streamResponse(upstream: Response, cacheControl: string) {
   });
 }
 
-async function handleR2Key(key: string) {
-  const presignUrl = `${CMS_URL.replace(
+async function handleR2Key(key: string, cmsBaseUrl: string) {
+  const presignUrl = `${cmsBaseUrl.replace(
     /\/+$/,
     ""
   )}/api/r2/presign?key=${encodeURIComponent(key)}&mode=json`;
@@ -126,6 +123,19 @@ async function handleRemoteUrl(urlParam: string) {
 
 export async function GET(req: NextRequest) {
   try {
+    const cms = resolveCmsBaseUrl(req);
+    if (!cms.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: "cms_url_misconfigured",
+          error: cms.error,
+          hint: cms.hint,
+        },
+        { status: 500 }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const key = searchParams.get("key");
     const urlParam = searchParams.get("url");
@@ -138,7 +148,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (key) {
-      return handleR2Key(key);
+      return handleR2Key(key, cms.baseUrl);
     }
 
     return handleRemoteUrl(urlParam as string);
@@ -149,4 +159,3 @@ export async function GET(req: NextRequest) {
     );
   }
 }
-

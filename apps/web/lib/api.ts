@@ -9,6 +9,30 @@ const CMS_PUBLIC_URL =
 // Normalize CMS base URL once to avoid repeat work
 const CMS_BASE = CMS_PUBLIC_URL.replace(/\/+$/, "");
 
+async function readHttpError(response: Response): Promise<string> {
+  try {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const data = await response.json();
+      const message =
+        (typeof data?.error === "string" && data.error) ||
+        (typeof data?.message === "string" && data.message) ||
+        "";
+      const hint = typeof data?.hint === "string" ? data.hint : "";
+      const parts = [message.trim(), hint.trim()].filter(Boolean);
+      if (parts.length > 0) return parts.join(" ");
+    } else {
+      const raw = (await response.text()).trim();
+      if (raw) return raw;
+    }
+  } catch {
+    // Fall through to status message.
+  }
+
+  const statusText = response.statusText?.trim();
+  return statusText || `HTTP ${response.status}`;
+}
+
 // Use relative URL to call our own API route which proxies to CMS
 export async function fetchBlocks(
   cursor?: string | null,
@@ -32,7 +56,8 @@ export async function fetchBlocks(
     const response = await fetch(`/api/blocks?${params.toString()}`, { signal });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch blocks: ${response.statusText}`);
+      const detail = await readHttpError(response);
+      throw new Error(`Failed to fetch blocks (${response.status}): ${detail}`);
     }
 
     const data = (await response.json()) as BlocksResponse;
@@ -60,7 +85,8 @@ export async function fetchBlockById(
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch block: ${response.statusText}`);
+      const detail = await readHttpError(response);
+      throw new Error(`Failed to fetch block (${response.status}): ${detail}`);
     }
 
     const data = await response.json();
@@ -223,7 +249,8 @@ export async function fetchUsers(
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch users: ${response.statusText}`);
+      const detail = await readHttpError(response);
+      throw new Error(`Failed to fetch users (${response.status}): ${detail}`);
     }
 
     const data = (await response.json()) as UsersResponse;
@@ -257,7 +284,8 @@ export async function searchBlocks(
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to search blocks: ${response.statusText}`);
+      const detail = await readHttpError(response);
+      throw new Error(`Failed to search blocks (${response.status}): ${detail}`);
     }
 
     const data = (await response.json()) as BlocksResponse;
@@ -299,7 +327,8 @@ export async function fetchUserByUsername(
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch user: ${response.statusText}`);
+      const detail = await readHttpError(response);
+      throw new Error(`Failed to fetch user (${response.status}): ${detail}`);
     }
 
     const data = (await response.json()) as UserResponse;
@@ -329,7 +358,8 @@ export async function fetchBlocksByUsername(
     const response = await fetch(`/api/blocks?${params.toString()}`, { signal });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch blocks: ${response.statusText}`);
+      const detail = await readHttpError(response);
+      throw new Error(`Failed to fetch blocks (${response.status}): ${detail}`);
     }
 
     const data = (await response.json()) as BlocksResponse;

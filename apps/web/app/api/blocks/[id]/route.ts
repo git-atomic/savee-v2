@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { resolveCmsBaseUrl } from "@/lib/server/cms-origin";
 
-const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
+const UPSTREAM_TIMEOUT_MS = 12_000;
 
 function extractBlockFromResponse(data: any, id: string) {
   const blocks = Array.isArray(data?.blocks)
@@ -27,14 +28,36 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const cms = resolveCmsBaseUrl(req);
+    if (!cms.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: "cms_url_misconfigured",
+          error: cms.error,
+          hint: cms.hint,
+        },
+        { status: 500 }
+      );
+    }
+
     const { id } = await params;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 
     // Use the custom list route to get enriched data with origin_map
-    const response = await fetch(`${CMS_URL}/api/blocks?externalId=${id}&limit=1`, {
-      headers: {
-        Accept: "application/json",
-      },
-    });
+    const response = await fetch(
+      `${cms.baseUrl}/api/blocks?externalId=${id}&limit=1`,
+      {
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+        },
+        cache: "no-store",
+        next: { revalidate: 0 },
+      }
+    );
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       return NextResponse.json(
@@ -49,13 +72,16 @@ export async function GET(
     // Payload docs-style fallback: custom `externalId` param is not supported there.
     if (!block && Array.isArray(data?.docs)) {
       const fallback = await fetch(
-        `${CMS_URL}/api/blocks?where[external_id][equals]=${encodeURIComponent(
+        `${cms.baseUrl}/api/blocks?where[external_id][equals]=${encodeURIComponent(
           id
         )}&limit=1`,
         {
+          signal: controller.signal,
           headers: {
             Accept: "application/json",
           },
+          cache: "no-store",
+          next: { revalidate: 0 },
         }
       );
       if (fallback.ok) {
@@ -73,6 +99,16 @@ export async function GET(
       { status: 404 }
     );
   } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "CMS request timeout",
+          hint: `Upstream did not respond within ${UPSTREAM_TIMEOUT_MS}ms`,
+        },
+        { status: 504 }
+      );
+    }
     console.error("Block API error:", error);
     return NextResponse.json(
       { success: false, error: "Internal server error" },

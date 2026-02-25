@@ -15,13 +15,194 @@ interface SourceData {
   username?: string;
 }
 
+type RunErrorCode =
+  | "invalid_input"
+  | "invalid_url"
+  | "capacity_limit"
+  | "run_already_active"
+  | "github_dispatch_failed"
+  | "database_error"
+  | "r2_error"
+  | "internal_error";
+
+type DispatchFailureReason =
+  | "billing_blocked"
+  | "missing_credentials"
+  | "token_permissions"
+  | "repository_access"
+  | "rate_limited"
+  | "api_error";
+
+interface DispatchLog {
+  kind: string;
+  status: number;
+  message: string | null;
+}
+
+function truncateText(text: string, max = 240): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 3)}...`;
+}
+
+function normalizeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+async function readGitHubResponseMessage(resp: Response): Promise<string | null> {
+  try {
+    const raw = (await resp.text()).trim();
+    if (!raw) return null;
+    try {
+      const json = JSON.parse(raw) as { message?: unknown };
+      if (typeof json?.message === "string" && json.message.trim()) {
+        return truncateText(json.message.trim());
+      }
+    } catch {}
+    return truncateText(raw.replace(/\s+/g, " "));
+  } catch {
+    return null;
+  }
+}
+
+function classifyDispatchFailure({
+  hasToken,
+  hasRepo,
+  dispatchLogs,
+}: {
+  hasToken: boolean;
+  hasRepo: boolean;
+  dispatchLogs: DispatchLog[];
+}): { reason: DispatchFailureReason; error: string; hint: string } {
+  if (!hasToken || !hasRepo) {
+    return {
+      reason: "missing_credentials",
+      error: "GitHub monitor dispatch is not configured",
+      hint:
+        "Set GITHUB_ACTIONS_TOKEN (or GITHUB_DISPATCH_TOKEN) and GITHUB_REPO in CMS env, then redeploy.",
+    };
+  }
+
+  const messages = dispatchLogs
+    .map((entry) => entry.message || "")
+    .filter(Boolean)
+    .join(" | ");
+  const messageLower = messages.toLowerCase();
+  const statuses = new Set(dispatchLogs.map((entry) => entry.status));
+
+  if (
+    messageLower.includes("payments have failed") ||
+    messageLower.includes("spending limit") ||
+    statuses.has(402)
+  ) {
+    return {
+      reason: "billing_blocked",
+      error: "GitHub Actions is blocked by billing or spending limits",
+      hint:
+        "Open GitHub Billing & plans, fix payment method/spending limit, then retry.",
+    };
+  }
+
+  if (
+    statuses.has(401) ||
+    statuses.has(403) ||
+    messageLower.includes("resource not accessible by integration") ||
+    messageLower.includes("must have access")
+  ) {
+    return {
+      reason: "token_permissions",
+      error: "GitHub token cannot dispatch monitor workflows",
+      hint:
+        "Update token permissions (repo/workflow for classic PAT, or Actions write for fine-grained PAT).",
+    };
+  }
+
+  if (
+    statuses.has(404) ||
+    messageLower.includes("not found") ||
+    messageLower.includes("repository does not exist")
+  ) {
+    return {
+      reason: "repository_access",
+      error: "GitHub repository or workflow is not accessible",
+      hint:
+        "Verify GITHUB_REPO and workflow file names (monitor.yml/manual-monitor.yml) in the target repo.",
+    };
+  }
+
+  if (statuses.has(429) || messageLower.includes("rate limit")) {
+    return {
+      reason: "rate_limited",
+      error: "GitHub API rate limit hit while dispatching monitor",
+      hint: "Wait a bit, then retry starting the job.",
+    };
+  }
+
+  return {
+    reason: "api_error",
+    error: "GitHub monitor dispatch failed",
+    hint:
+      messages.length > 0
+        ? `GitHub response: ${truncateText(messages)}`
+        : "Check GitHub Actions status, token permissions, and repo settings.",
+  };
+}
+
+function classifyUnhandledRunError(error: unknown): {
+  code: RunErrorCode;
+  error: string;
+  hint: string;
+} {
+  const raw = normalizeErrorMessage(error);
+  const lower = raw.toLowerCase();
+
+  if (
+    lower.includes("database") ||
+    lower.includes("postgres") ||
+    lower.includes("relation") ||
+    lower.includes("duplicate key") ||
+    lower.includes("sql") ||
+    lower.includes("connect") ||
+    lower.includes("timeout")
+  ) {
+    return {
+      code: "database_error",
+      error: "Database error while starting job",
+      hint: "Check DATABASE_URL connectivity and database health.",
+    };
+  }
+
+  if (lower.includes("r2") || lower.includes("cloudflare") || lower.includes("bucket")) {
+    return {
+      code: "r2_error",
+      error: "R2/storage error while preparing run",
+      hint: "Check primary/secondary R2 credentials and bucket access.",
+    };
+  }
+
+  return {
+    code: "internal_error",
+    error: "Failed to start job",
+    hint: `Unhandled error: ${truncateText(raw, 180)}`,
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { url: rawUrl, maxItems, force: forceBody } = await request.json();
 
     if (!rawUrl) {
       return NextResponse.json(
-        { success: false, error: "URL is required" },
+        {
+          success: false,
+          code: "invalid_input" as RunErrorCode,
+          error: "URL is required",
+        },
         { status: 400 }
       );
     }
@@ -61,7 +242,9 @@ export async function POST(request: NextRequest) {
           return NextResponse.json(
             {
               success: false,
+              code: "capacity_limit" as RunErrorCode,
               error: "Capacity near limits",
+              reason: "db_soft_limit",
               message:
                 capacityReasons.length > 0
                   ? capacityReasons.join("; ")
@@ -90,7 +273,11 @@ export async function POST(request: NextRequest) {
 
     if (!parsedUrl.isValid) {
       return NextResponse.json(
-        { success: false, error: "Invalid savee.it URL" },
+        {
+          success: false,
+          code: "invalid_url" as RunErrorCode,
+          error: "Invalid savee.it URL",
+        },
         { status: 400 }
       );
     }
@@ -198,10 +385,15 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             success: false,
+            code: "run_already_active" as RunErrorCode,
             error:
               active.status === "pending"
                 ? "Previous run is still pending. Wait a bit or use Run Now with force."
                 : "Run already active for this source",
+            details: {
+              activeStatus: active.status,
+              activeRunId: active.id,
+            },
           },
           { status: 409 }
         );
@@ -230,7 +422,7 @@ export async function POST(request: NextRequest) {
     if (externalRunner) {
       // Attempt to trigger GH monitor workflow so user sees action immediately
       let dispatched = false;
-      const dispatchLogs: Array<{ kind: string; status: number }> = [];
+      const dispatchLogs: DispatchLog[] = [];
       try {
         const token =
           process.env.GITHUB_ACTIONS_TOKEN || process.env.GITHUB_DISPATCH_TOKEN;
@@ -254,9 +446,11 @@ export async function POST(request: NextRequest) {
                 }),
               }
             );
+            const ghMessage = resp.ok ? null : await readGitHubResponseMessage(resp);
             dispatchLogs.push({
               kind: "repository_dispatch",
               status: resp.status,
+              message: ghMessage,
             });
             dispatched ||= resp.ok;
           } catch (e) {
@@ -280,9 +474,13 @@ export async function POST(request: NextRequest) {
                   }),
                 }
               );
+              const ghMessage = resp2.ok
+                ? null
+                : await readGitHubResponseMessage(resp2);
               dispatchLogs.push({
                 kind: "workflow_dispatch:monitor.yml",
                 status: resp2.status,
+                message: ghMessage,
               });
               dispatched ||= resp2.ok;
             } catch (e) {
@@ -307,9 +505,13 @@ export async function POST(request: NextRequest) {
                   }),
                 }
               );
+              const ghMessage = resp3.ok
+                ? null
+                : await readGitHubResponseMessage(resp3);
               dispatchLogs.push({
                 kind: "workflow_dispatch:manual-monitor.yml",
                 status: resp3.status,
+                message: ghMessage,
               });
               dispatched ||= resp3.ok;
             } catch (e) {
@@ -324,6 +526,11 @@ export async function POST(request: NextRequest) {
         process.env.GITHUB_ACTIONS_TOKEN || process.env.GITHUB_DISPATCH_TOKEN
       );
       const hasRepo = Boolean(process.env.GITHUB_REPO);
+      const dispatchFailure = classifyDispatchFailure({
+        hasToken,
+        hasRepo,
+        dispatchLogs,
+      });
       const debug = {
         hasToken,
         hasRepo,
@@ -347,15 +554,15 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             success: false,
+            code: "github_dispatch_failed" as RunErrorCode,
+            reason: dispatchFailure.reason,
             runId,
             sourceType: parsedUrl.sourceType,
             username: parsedUrl.username,
             mode: "external",
             dispatched: false,
-            error:
-              "Run was queued as pending but GitHub monitor was not dispatched",
-            hint:
-              "Set GITHUB_ACTIONS_TOKEN (or GITHUB_DISPATCH_TOKEN) and GITHUB_REPO in CMS Vercel env, then redeploy.",
+            error: dispatchFailure.error,
+            hint: dispatchFailure.hint,
             debug,
           },
           { status: 503 }
@@ -450,8 +657,14 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Error starting job:", error);
+    const classified = classifyUnhandledRunError(error);
     return NextResponse.json(
-      { success: false, error: "Failed to start job" },
+      {
+        success: false,
+        code: classified.code,
+        error: classified.error,
+        hint: classified.hint,
+      },
       { status: 500 }
     );
   }

@@ -12,6 +12,21 @@ import {
   type SourceType,
 } from "@/lib/url-utils";
 
+interface StartJobErrorPayload {
+  success?: boolean;
+  code?: string;
+  reason?: string;
+  error?: string;
+  message?: string;
+  hint?: string;
+  details?: any;
+}
+
+interface ToastCopy {
+  title: string;
+  description?: string;
+}
+
 function getCapacityDescription(
   details: any,
   fallback: string
@@ -21,6 +36,7 @@ function getCapacityDescription(
   const r2Near = Boolean(details?.r2?.nearLimit);
   const primaryR2Near = Boolean(details?.r2?.primaryNearLimit);
   const canFailover = Boolean(details?.r2?.canFailoverToSecondary);
+  const secondaryUnavailableReason = details?.r2?.secondaryUnavailableReason;
 
   if (dbNear) reasons.push("DB is near soft limit");
   if (r2Near || primaryR2Near) {
@@ -28,10 +44,88 @@ function getCapacityDescription(
       reasons.push("Primary R2 is near soft limit, but secondary failover is available");
     } else {
       reasons.push("R2 is near soft limit and secondary failover is unavailable");
+      if (secondaryUnavailableReason) {
+        reasons.push(`Secondary status: ${secondaryUnavailableReason}`);
+      }
     }
   }
 
   return reasons.length > 0 ? reasons.join(" | ") : fallback;
+}
+
+function withHint(message?: string, hint?: string): string | undefined {
+  const base = (message || "").trim();
+  const extra = (hint || "").trim();
+  if (!base && !extra) return undefined;
+  if (!base) return extra;
+  if (!extra) return base;
+  return `${base} ${extra}`;
+}
+
+function getErrorToast(data: StartJobErrorPayload, status: number): ToastCopy {
+  const message =
+    data.error ||
+    data.message ||
+    `Server error: ${status}`;
+
+  if (status === 429 || data.code === "capacity_limit") {
+    const description = data.details
+      ? getCapacityDescription(data.details, data.message || message)
+      : data.message || message;
+    return {
+      title: "Capacity Limit Reached",
+      description: withHint(description, data.hint),
+    };
+  }
+
+  if (data.code === "github_dispatch_failed") {
+    if (data.reason === "billing_blocked") {
+      return {
+        title: "GitHub Actions Billing Blocked",
+        description: withHint(
+          "GitHub refused to start the workflow because billing/spending is blocked.",
+          data.hint
+        ),
+      };
+    }
+    return {
+      title: "GitHub Monitor Dispatch Failed",
+      description: withHint(message, data.hint),
+    };
+  }
+
+  if (status === 409 || data.code === "run_already_active") {
+    return {
+      title: "Run Already Active",
+      description: data.message || message,
+    };
+  }
+
+  if (data.code === "database_error") {
+    return {
+      title: "Database Error",
+      description: withHint(message, data.hint),
+    };
+  }
+
+  if (data.code === "r2_error") {
+    return {
+      title: "R2 Storage Error",
+      description: withHint(message, data.hint),
+    };
+  }
+
+  if (status === 400 || data.code === "invalid_input" || data.code === "invalid_url") {
+    return {
+      title: "Invalid Request",
+      description: data.message || message,
+    };
+  }
+
+  return {
+    title: "Failed to Start Job",
+    description: withHint(message, data.hint),
+  };
 }
 
 export function AddJobForm() {
@@ -133,29 +227,16 @@ export function AddJobForm() {
         }),
       });
 
-      const data = await response.json();
+      let data: StartJobErrorPayload = {};
+      try {
+        data = (await response.json()) as StartJobErrorPayload;
+      } catch {}
 
       if (!response.ok) {
-        // Handle HTTP errors
-        const errorMessage =
-          data.error ||
-          data.message ||
-          `Server error: ${response.status} ${response.statusText}`;
-
-        // Handle capacity limit errors
-        if (response.status === 429 && data.details) {
-          const capacityDescription = getCapacityDescription(
-            data.details,
-            data.message || errorMessage
-          );
-          toast.error("Capacity Limit Reached", {
-            description: capacityDescription,
-          });
-        } else {
-          toast.error("Failed to Start Job", {
-            description: errorMessage,
-          });
-        }
+        const toastCopy = getErrorToast(data, response.status);
+        toast.error(toastCopy.title, {
+          description: toastCopy.description,
+        });
         return;
       }
 

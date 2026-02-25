@@ -1,4 +1,5 @@
 import { BlockDetails } from "@/components/BlockDetails";
+import { resolveCmsBaseUrl } from "@/lib/server/cms-origin";
 import { notFound } from "next/navigation";
 
 interface PageProps {
@@ -25,7 +26,13 @@ function extractBlockFromResponse(data: any, id: string) {
 }
 
 async function fetchBlock(id: string) {
-  const cmsUrl = process.env.CMS_URL || "http://localhost:3000";
+  const cms = resolveCmsBaseUrl();
+  if (!cms.ok) {
+    console.error("Block modal CMS config error:", cms.error, cms.hint);
+    return null;
+  }
+
+  const cmsUrl = cms.baseUrl;
   try {
     const res = await fetch(`${cmsUrl}/api/blocks?externalId=${id}&limit=1`, {
       cache: "no-store",

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dedupeBlocksByStableKey } from "@/lib/block-dedupe";
+import { resolveCmsBaseUrl } from "@/lib/server/cms-origin";
 
 // Force dynamic rendering - prevent Next.js from caching this route
 export const dynamic = "force-dynamic";
@@ -7,9 +8,7 @@ export const revalidate = 0;
 const EDGE_CACHE_SECONDS = 5;
 const EDGE_STALE_SECONDS = 20;
 
-// Server-side CMS base URL. This should always be the Payload CMS origin,
-// not the frontend, so we only use CMS_URL here.
-const CMS_URL = process.env.CMS_URL || "http://localhost:3000";
+const UPSTREAM_TIMEOUT_MS = 12_000;
 
 function parsePageCursor(cursor: string | null): number | null {
   if (!cursor || !cursor.startsWith("page:")) return null;
@@ -55,6 +54,24 @@ function normalizeBlocksResponseShape(data: any) {
 
 export async function GET(req: NextRequest) {
   try {
+    const cms = resolveCmsBaseUrl(req);
+    if (!cms.ok) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: "cms_url_misconfigured",
+          error: cms.error,
+          hint: cms.hint,
+        },
+        {
+          status: 500,
+          headers: {
+            "Cache-Control": "no-store",
+          },
+        }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const pageCursor = parsePageCursor(searchParams.get("cursor"));
     const hasCursor = Boolean(searchParams.get("cursor"));
@@ -80,11 +97,11 @@ export async function GET(req: NextRequest) {
 
     // Add timeout to prevent hanging requests
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    const timeoutId = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
 
     try {
       const response = await fetch(
-        `${CMS_URL}/api/blocks?${cmsParams.toString()}`,
+        `${cms.baseUrl}/api/blocks?${cmsParams.toString()}`,
         {
           signal: controller.signal,
           headers: {
@@ -131,7 +148,11 @@ export async function GET(req: NextRequest) {
 
       if (fetchError instanceof Error && fetchError.name === "AbortError") {
         return NextResponse.json(
-          { success: false, error: "Request timeout" },
+          {
+            success: false,
+            error: "CMS request timeout",
+            hint: `Upstream did not respond within ${UPSTREAM_TIMEOUT_MS}ms`,
+          },
           { status: 504 }
         );
       }
