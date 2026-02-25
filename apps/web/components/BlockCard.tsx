@@ -94,20 +94,28 @@ function BlockCardComponent({
 }: BlockCardProps) {
   const router = useRouter();
   const wasPreviouslyLoaded = loadedBlocksCache.has(block.id);
-  const initial = getBlockMediaUrl(block, { preferProxy: false });
+  const isVideo = block.media_type === "video" || Boolean(block.video_url);
+  const initial = getBlockMediaUrl(block, { preferProxy: isVideo });
   const r2Fallback = block.r2_key
     ? `/api/media?key=${encodeURIComponent(block.r2_key)}`
     : null;
   const remoteFallbacks = dedupeUrlCandidates([block.thumbnail_url, block.image_url])
     .filter(isHttpUrl)
     .map((url) => getRemoteMediaProxyUrl(url));
-  const imageCandidates = dedupeUrlCandidates([
-    initial,
-    block.thumbnail_url,
-    block.image_url,
-    r2Fallback,
-    ...remoteFallbacks,
-  ]);
+  const imageCandidates = isVideo
+    ? dedupeUrlCandidates([
+        initial,
+        ...remoteFallbacks,
+        block.thumbnail_url,
+        block.image_url,
+      ])
+    : dedupeUrlCandidates([
+        initial,
+        block.thumbnail_url,
+        block.image_url,
+        r2Fallback,
+        ...remoteFallbacks,
+      ]);
 
   // State management
   const [imageSrc, setImageSrc] = useState<string>(() => imageCandidates[0] || "");
@@ -136,7 +144,6 @@ function BlockCardComponent({
   const failedImageSourcesRef = useRef<Set<string>>(new Set());
 
   // Computed values
-  const isVideo = block.media_type === "video" || Boolean(block.video_url);
   const videoUrl = getBlockVideoUrl(block);
   const aspectRatio = localAspectRatio ?? propAspectRatio;
   const displayAspectRatio =
