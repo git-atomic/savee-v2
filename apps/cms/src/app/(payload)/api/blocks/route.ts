@@ -125,7 +125,17 @@ export async function GET(req: NextRequest) {
     let cursorSortTs: string | null = null;
     let cursorId: string | null = null;
     let cursorPop: number | null = null;
-    const sortTimestampExpr = "COALESCE(b.updated_at, b.created_at, b.saved_at)";
+    // `blocks.saved_at` is stored as text in legacy schemas.
+    // Cast it only when it looks like an ISO timestamp to avoid runtime SQL type errors.
+    const sortTimestampExpr = `COALESCE(
+      b.updated_at,
+      b.created_at,
+      CASE
+        WHEN NULLIF(b.saved_at, '') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+        THEN NULLIF(b.saved_at, '')::timestamptz
+        ELSE NULL
+      END
+    )`;
     if (cursor) {
       try {
         const decoded = Buffer.from(cursor, "base64").toString();
