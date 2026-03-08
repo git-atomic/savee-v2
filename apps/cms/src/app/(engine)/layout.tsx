@@ -62,7 +62,7 @@ const inter = localFont({
 });
 
 export const metadata = {
-  title: "ScrapeSavee Engine",
+  title: "FlowCMS Engine",
   description: "Engine Dashboard",
 };
 
